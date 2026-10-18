@@ -1,0 +1,4 @@
+export MCWSD_TOKEN=wsd-<token>
+export GITHUB_TOKEN=github_pat_<token>
+export MCWSD_GIT_SSH_KNOWN_HOSTS=/usr/local/etc/wsd/known_hosts
+export SSH_KEY_PATH=/usr/local/etc/wsd/id_ed25519

@@ -1,0 +1,308 @@
+#!/bin/sh
+
+# PROVIDE: mcwsd
+# REQUIRE: DAEMON NETWORKING
+# BEFORE:  LOGIN
+# KEYWORD: shutdown
+
+#
+# Add the following lines to /etc/rc.conf to enable mcwsd:
+#
+# mcwsd_enable="YES"
+#
+
+. /etc/rc.subr
+
+name="mcwsd"
+rcvar="mcwsd_enable"
+desc="MCWSD daemon"
+
+# Add /usr/local/bin and /usr/local/sbin
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+export PATH
+
+load_rc_config $name
+
+# Defaults
+: ${mcwsd_source_env_file:="/usr/local/etc/wsd/env"}
+: ${mcwsd_enable:="NO"}
+: ${mcwsd_runtime:="jail"}  # default to jail on FreeBSD
+: ${mcwsd_user:="wsd"}
+: ${mcwsd_group:="wsd"}
+: ${mcwsd_pidfile:="/var/run/${name}.pid"}
+: ${mcwsd_port:="9080"}
+: ${mcwsd_workspace_base_path:="/home/wsd"}
+: ${mcwsd_cache_dir:="/home/wsd/cache"}
+: ${mcwsd_state_file:="/home/wsd/state.json"}
+: ${mcwsd_bind_address:="0.0.0.0"}
+: ${mcwsd_provisioning_hints_file:="/usr/local/etc/wsd/provisioning_hints.json"}
+: ${mcwsd_max_cache_gb:="20"}
+: ${mcwsd_workspace_ttl:="24h"}
+: ${mcwsd_prune_interval:="1h"}
+: ${mcwsd_prune_on_startup:="YES"}
+: ${mcwsd_tls_cert_file:=""}
+: ${mcwsd_tls_key_file:=""}
+: ${mcwsd_capacity_memory_percent:="0"}
+: ${mcwsd_capacity_swap_percent:="0"}
+: ${mcwsd_capacity_cpu_percent:="0"}
+: ${mcwsd_capacity_filesystems:=""}
+: ${mcwsd_max_jobs_per_workspace:="1"}
+: ${mcwsd_max_jobs_total:="0"}
+: ${mcwsd_job_max_runtime:="0s"}
+: ${mcwsd_job_log_max_bytes:="10485760"}
+: ${mcwsd_job_retention:="24h"}
+: ${mcwsd_provision_wait_seconds:="0"}
+: ${mcwsd_provision_timeout:="0s"}
+: ${mcwsd_forge_type:=""}   # forgejo, github, gitlab, gitea - leave empty to disable commit_and_pr
+: ${mcwsd_git_auth_mode:="token"}  # "ssh" or "token"
+: ${mcwsd_git_commit_name:="mcwsd-agent"}  # author name for commits
+: ${mcwsd_git_commit_email:="mcwsd-agent@localhost"}  # author email for commits
+: ${mcwsd_forgejo_token:=""}
+: ${mcwsd_debug:="YES"}
+: ${mcwsd_freebsd_network_mode:="vnet"}
+: ${mcwsd_freebsd_interface:="em0"}
+: ${mcwsd_freebsd_release:="15.1-RELEASE"}
+: ${mcwsd_base_template_url:=""}
+: ${mcwsd_base_template_user:=""}
+: ${mcwsd_base_template_password_env:=""}
+: ${mcwsd_base_template_header:=""}
+: ${mcwsd_base_template_header_env:=""}
+: ${mcwsd_verify_signature:="NO"}
+: ${mcwsd_template_public_key:=""}
+: ${mcwsd_freebsd_ip4_address:=""}
+: ${mcwsd_freebsd_vnet_gateway:=""}
+: ${mcwsd_freebsd_ip_base_network:=""}
+: ${mcwsd_freebsd_ip_pool_size:="0"}
+: ${mcwsd_freebsd_dns_servers:=""}
+: ${mcwsd_escalation_command:="mdo"}
+: ${mcwsd_gitlab_api_base:=""}
+: ${mcwsd_gitlab_project_path:=""}
+: ${mcwsd_gitlab_token:=""}
+: ${mcwsd_gitlab_token_username:="oauth2"}  # for token mode git push basic auth
+: ${mcwsd_gitea_api_base:=""}
+: ${mcwsd_gitea_project_path:=""}
+: ${mcwsd_gitea_token:=""}
+: ${mcwsd_github_api_base:=""}
+: ${mcwsd_github_project_path:=""}
+: ${mcwsd_github_token:=""}
+: ${mcwsd_gitlab_token_env_var:="MCWSD_GITLAB_TOKEN"}
+: ${mcwsd_gitea_token_env_var:="MCWSD_GITEA_TOKEN"}
+: ${mcwsd_github_token_env_var:="GITHUB_TOKEN"}
+: ${mcwsd_forgejo_token_env_var:="FORGEJO_TOKEN"}
+: ${mcwsd_git_ssh_key_path_env_var:="MCWSD_GIT_SSH_KEY_PATH"}  # SSH key path env var for ssh auth
+: ${mcwsd_git_ssh_known_hosts_env_var:="MCWSD_GIT_SSH_KNOWN_HOSTS"}  # known_hosts path env var for ssh auth
+: ${mcwsd_jobs_file:="/home/wsd/jobs.json"}
+: ${mcwsd_exec_wait_seconds:="300"}
+: ${mcwsd_audit_file:="/var/log/mcwsd-audit.jsonl"}
+: ${mcwsd_forgejo_api_base:=""}
+: ${mcwsd_audit:="YES"}
+
+# Required secrets - set these in /etc/rc.conf (or better, in a
+# protected file sourced by rc.conf) if not already in the environment:
+: ${mcwsd_token:=""}
+
+pidfile="${mcwsd_pidfile}"
+procname="/usr/local/bin/mcwsd"
+
+if test -f "${mcwsd_source_env_file}" ; then
+. "${mcwsd_source_env_file}"
+fi
+
+command="/usr/sbin/daemon"
+command_args="-f -p ${pidfile} -o /var/log/${name}.log /usr/local/bin/mcwsd daemon"
+command_args="${command_args} --port ${mcwsd_port}"
+command_args="${command_args} --workspace-base-path ${mcwsd_workspace_base_path}"
+command_args="${command_args} --cache-dir ${mcwsd_cache_dir}"
+command_args="${command_args} --runtime ${mcwsd_runtime}"
+command_args="${command_args} --state-file ${mcwsd_state_file}"
+command_args="${command_args} --provisioning-hints-file=${mcwsd_provisioning_hints_file}"
+command_args="${command_args} --max-cache-gb=${mcwsd_max_cache_gb}"
+command_args="${command_args} --workspace-ttl=${mcwsd_workspace_ttl}"
+command_args="${command_args} --prune-interval=${mcwsd_prune_interval}"
+if checkyesno mcwsd_prune_on_startup; then
+    command_args="${command_args} --prune-on-startup=true"
+else
+    command_args="${command_args} --prune-on-startup=false"
+fi
+command_args="${command_args} --capacity-memory-percent=${mcwsd_capacity_memory_percent}"
+command_args="${command_args} --capacity-swap-percent=${mcwsd_capacity_swap_percent}"
+command_args="${command_args} --capacity-cpu-percent=${mcwsd_capacity_cpu_percent}"
+command_args="${command_args} --capacity-filesystems=${mcwsd_capacity_filesystems}"
+command_args="${command_args} --max-jobs-per-workspace=${mcwsd_max_jobs_per_workspace}"
+command_args="${command_args} --max-jobs-total=${mcwsd_max_jobs_total}"
+command_args="${command_args} --job-max-runtime=${mcwsd_job_max_runtime}"
+command_args="${command_args} --job-log-max-bytes=${mcwsd_job_log_max_bytes}"
+command_args="${command_args} --job-retention=${mcwsd_job_retention}"
+command_args="${command_args} --provision-wait-seconds=${mcwsd_provision_wait_seconds}"
+command_args="${command_args} --provision-timeout=${mcwsd_provision_timeout}"
+command_args="${command_args} --forge-type=${mcwsd_forge_type}"
+command_args="${command_args} --git-auth-mode=${mcwsd_git_auth_mode}"
+command_args="${command_args} --bind-address=${mcwsd_bind_address}"
+command_args="${command_args} --jobs-file=${mcwsd_jobs_file}"
+command_args="${command_args} --exec-wait-seconds=${mcwsd_exec_wait_seconds}"
+if [ -n "${mcwsd_tls_cert_file}" ]; then
+    command_args="${command_args} --tls-cert-file=${mcwsd_tls_cert_file}"
+fi
+if [ -n "${mcwsd_tls_key_file}" ]; then
+    command_args="${command_args} --tls-key-file=${mcwsd_tls_key_file}"
+fi
+
+# Forge-specific configuration (commit_and_pr options)
+case ${mcwsd_forge_type} in
+    forgejo)
+        if [ -n "${mcwsd_forgejo_api_base}" ]; then
+            command_args="${command_args} --forgejo-api-base=${mcwsd_forgejo_api_base}"
+        fi
+        if [ -n "${mcwsd_forgejo_project_path}" ]; then
+            command_args="${command_args} --forgejo-project-path=${mcwsd_forgejo_project_path}"
+        fi
+        if [ -n "${mcwsd_forgejo_token_env_var}" ]; then
+            command_args="${command_args} --forgejo-token-env-var=${mcwsd_forgejo_token_env_var}"
+        fi
+        ;;
+    github)
+        if [ -n "${mcwsd_github_api_base}" ]; then
+            command_args="${command_args} --github-api-base=${mcwsd_github_api_base}"
+        fi
+        if [ -n "${mcwsd_github_project_path}" ]; then
+            command_args="${command_args} --github-project-path=${mcwsd_github_project_path}"
+        fi
+        if [ -n "${mcwsd_github_token_env_var}" ]; then
+            command_args="${command_args} --github-token-env-var=${mcwsd_github_token_env_var}"
+        fi
+        ;;
+    gitlab)
+        if [ -n "${mcwsd_gitlab_api_base}" ]; then
+            command_args="${command_args} --gitlab-api-base=${mcwsd_gitlab_api_base}"
+        fi
+        if [ -n "${mcwsd_gitlab_project_path}" ]; then
+            command_args="${command_args} --gitlab-project-path=${mcwsd_gitlab_project_path}"
+        fi
+        if [ -n "${mcwsd_gitlab_token_env_var}" ]; then
+            command_args="${command_args} --gitlab-token-env-var=${mcwsd_gitlab_token_env_var}"
+        fi
+        if [ -n "${mcwsd_gitlab_token_username}" ]; then
+            command_args="${command_args} --gitlab-token-username=${mcwsd_gitlab_token_username}"
+        fi
+        ;;
+    gitea)
+        if [ -n "${mcwsd_gitea_api_base}" ]; then
+            command_args="${command_args} --gitea-api-base=${mcwsd_gitea_api_base}"
+        fi
+        if [ -n "${mcwsd_gitea_project_path}" ]; then
+            command_args="${command_args} --gitea-project-path=${mcwsd_gitea_project_path}"
+        fi
+        if [ -n "${mcwsd_gitea_token_env_var}" ]; then
+            command_args="${command_args} --gitea-token-env-var=${mcwsd_gitea_token_env_var}"
+        fi
+        ;;
+esac
+
+# Commit configuration (common to all forge types when auth is enabled)
+if [ -n "${mcwsd_git_commit_name}" ]; then
+    command_args="${command_args} --git-commit-name=${mcwsd_git_commit_name}"
+fi
+
+if [ -n "${mcwsd_git_commit_email}" ]; then
+    command_args="${command_args} --git-commit-email=${mcwsd_git_commit_email}"
+fi
+
+# SSH-related options (when using ssh auth mode)
+if [ -n "${mcwsd_git_auth_mode}" ] && [ "${mcwsd_git_auth_mode}" = "ssh" ]; then
+    if [ -n "${mcwsd_git_ssh_key_path_env_var}" ]; then
+        command_args="${command_args} --git-ssh-key-path-env-var=${mcwsd_git_ssh_key_path_env_var}"
+    fi
+    if [ -n "${mcwsd_git_ssh_known_hosts_env_var}" ]; then
+        command_args="${command_args} --git-ssh-known-hosts-env-var=${mcwsd_git_ssh_known_hosts_env_var}"
+    fi
+fi
+
+# Runtime-specific configuration
+case ${mcwsd_runtime} in
+    jail|freebsd)
+        command_args="${command_args} --freebsd-release=${mcwsd_freebsd_release}"
+        command_args="${command_args} --freebsd-network-mode=${mcwsd_freebsd_network_mode}"
+        command_args="${command_args} --freebsd-ip-pool-size=${mcwsd_freebsd_ip_pool_size}"
+        command_args="${command_args} --escalation-command=${mcwsd_escalation_command}"
+        if [ -n "${mcwsd_base_template_url}" ]; then
+            command_args="${command_args} --base-template-url=${mcwsd_base_template_url}"
+        fi
+        if [ -n "${mcwsd_base_template_user}" ]; then
+            command_args="${command_args} --base-template-user=${mcwsd_base_template_user}"
+        fi
+        if [ -n "${mcwsd_base_template_password_env}" ]; then
+            command_args="${command_args} --base-template-password-env=${mcwsd_base_template_password_env}"
+        fi
+        if [ -n "${mcwsd_base_template_header}" ]; then
+            command_args="${command_args} --base-template-header=${mcwsd_base_template_header}"
+        fi
+        if [ -n "${mcwsd_base_template_header_env}" ]; then
+            command_args="${command_args} --base-template-header-env=${mcwsd_base_template_header_env}"
+        fi
+        if checkyesno mcwsd_verify_signature; then
+            command_args="${command_args} --verify-signature=true"
+        fi
+        if [ -n "${mcwsd_template_public_key}" ]; then
+            command_args="${command_args} --template-public-key=${mcwsd_template_public_key}"
+        fi
+        if [ -n "${mcwsd_freebsd_ip4_address}" ]; then
+            command_args="${command_args} --freebsd-ip4-address=${mcwsd_freebsd_ip4_address}"
+        fi
+        if [ -n "${mcwsd_freebsd_interface}" ]; then
+            command_args="${command_args} --freebsd-interface=${mcwsd_freebsd_interface}"
+        fi
+        if [ -n "${mcwsd_freebsd_vnet_gateway}" ]; then
+            command_args="${command_args} --freebsd-vnet-gateway=${mcwsd_freebsd_vnet_gateway}"
+        fi
+        if [ -n "${mcwsd_freebsd_ip_base_network}" ]; then
+            command_args="${command_args} --freebsd-ip-base-network=${mcwsd_freebsd_ip_base_network}"
+        fi
+        if [ -n "${mcwsd_freebsd_dns_servers}" ]; then
+            command_args="${command_args} --freebsd-dns-servers=${mcwsd_freebsd_dns_servers}"
+        fi
+        ;;
+esac
+
+if checkyesno mcwsd_audit; then
+    command_args="${command_args} --audit"
+    command_args="${command_args} --audit-file=${mcwsd_audit_file}"
+fi
+
+if checkyesno mcwsd_debug; then
+    command_args="${command_args} --debug"
+fi
+
+start_precmd="mcwsd_prestart"
+stop_postcmd="mcwsd_poststop"
+
+mcwsd_prestart()
+{
+    # Export environment variables consumed by mcwsd.
+    if [ -n "${mcwsd_token}" ]; then
+        MCWSD_TOKEN="${mcwsd_token}"
+        export MCWSD_TOKEN
+    fi
+    # Note: SSH config is loaded from /etc/ssh/ssh_config or user config
+    # Known hosts and SSH key paths are handled via environment variables set above
+
+    # Make sure the runtime directories exist.
+    for d in "${mcwsd_workspace_base_path}" "${mcwsd_cache_dir}" \
+             "$(dirname "${mcwsd_state_file}")" /var/log; do
+        [ -d "$d" ] || mkdir -p "$d" || chown -R ${mcwsd_user}:${mcwsd_group} $d
+    done
+
+    # Make sure the runtime files exist.
+    for f in "/var/log/mcwsd.log" "/var/run/mcwsd.pid" 
+    do
+        [ -f "$f" ] || touch "$f" && chown ${mcwsd_user}:${mcwsd_group} $f
+    done
+}
+
+mcwsd_poststop()
+{
+    if [ -f "${pidfile}" ]; then
+        rm -f "${pidfile}"
+    fi
+}
+
+run_rc_command "$1"
