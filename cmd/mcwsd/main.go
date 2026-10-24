@@ -297,7 +297,7 @@ Flags are grouped into three concerns:
 		"Path to the administrator-built golden qcow2 that workspaces are cloned from (vmd runtime only; default <vm-root>/disk-master.qcow2)")
 	f.StringVar(&vmdMemory, "openbsd-memory", "1G",
 		"Memory size passed to vmctl(8) -m for each VM, e.g. 1G (vmd runtime only)")
-	f.StringVar(&vmdProcessors, "openbsd-processors", "1",
+	f.IntVar(&vmdProcessors, "openbsd-processors", 1,
 		"Number of processors passed to vmctl(8) -p for each VM, e.g. 1 (vmd runtime only)")
 	f.StringVar(&vmdLoginUser, "openbsd-login-user", "root",
 		"Guest account the daemon SSHes in as; use root or a dedicated user with doas/sudo (vmd runtime only)")

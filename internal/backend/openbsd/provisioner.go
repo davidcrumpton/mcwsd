@@ -136,7 +136,7 @@ type VMDProvisioner struct {
 	memory string
 	// loginUser is the account the daemon SSHes into the guest as
 	// (default: root).
-	processors int
+
 	loginUser string
 	// sshKeyPath is the host path to the SSH private key matching the public
 	// key baked into the master image.
@@ -147,7 +147,7 @@ type VMDProvisioner struct {
 	// on the runtime handle so the agent picks the right package manager.
 	guestOS runtime.OS
 	// OpenBSD 8 support multiple processors
-	processors runtime.OS
+	processors int
 
 	// bootTimeout bounds how long Provision waits for a VM to become
 	// reachable. VMs boot slowly; the default is deliberately generous.
@@ -190,7 +190,7 @@ func NewVMDProvisioner(vmRoot, masterImage, memory, processors, loginUser, sshKe
 	if memory == "" {
 		memory = defaultMemory
 	}
-	if processors == "" {
+	if processors > 1 {
 		processors = fmt.Sprintf("%d", defaultProcessors)
 	}
 	if loginUser == "" {
