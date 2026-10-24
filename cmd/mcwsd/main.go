@@ -34,7 +34,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.3.493"
+	Version         = "0.3.495"
 )
 
 func isRoot() bool {
@@ -128,6 +128,7 @@ func newDaemonCmd() *cobra.Command {
 		vmdVMRoot                 string
 		vmdMasterImage            string
 		vmdMemory                 string
+		vmdProcessors             int
 		vmdLoginUser              string
 		vmdSSHKey                 string
 		vmdSSHPort                int
@@ -216,7 +217,7 @@ Flags are grouped into three concerns:
 				freebsdIPBaseNetwork, freebsdIPPoolSize, freebsdDNSServers,
 				escalationCommand,
 				baseTemplate,
-				vmdVMRoot, vmdMasterImage, vmdMemory, vmdLoginUser, vmdSSHKey,
+				vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors, vmdLoginUser, vmdSSHKey,
 				vmdSSHPort, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand, vmdBootTimeout, vmdSSHProbeTimeout,
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
@@ -296,6 +297,8 @@ Flags are grouped into three concerns:
 		"Path to the administrator-built golden qcow2 that workspaces are cloned from (vmd runtime only; default <vm-root>/disk-master.qcow2)")
 	f.StringVar(&vmdMemory, "openbsd-memory", "1G",
 		"Memory size passed to vmctl(8) -m for each VM, e.g. 1G (vmd runtime only)")
+	f.StringVar(&vmdProcessors, "openbsd-processors", "1",
+		"Number of processors passed to vmctl(8) -p for each VM, e.g. 1 (vmd runtime only)")
 	f.StringVar(&vmdLoginUser, "openbsd-login-user", "root",
 		"Guest account the daemon SSHes in as; use root or a dedicated user with doas/sudo (vmd runtime only)")
 	f.StringVar(&vmdSSHKey, "openbsd-ssh-key", "/var/wsd/agent_ed25519",
@@ -430,7 +433,7 @@ func runDaemon(
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
 	baseTemplate freebsd.TemplateOptions,
-	vmdVMRoot, vmdMasterImage, vmdMemory, vmdLoginUser, vmdSSHKey string,
+	vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors,vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	provisioningHintsFile, workspaceBasePath string,
@@ -539,7 +542,7 @@ func runDaemon(
 		freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway,
 		freebsdIPBaseNetwork, freebsdIPPoolSize, freebsdDNSServers,
 		escalationCommand,
-		vmdVMRoot, vmdMasterImage, vmdMemory, vmdLoginUser, vmdSSHKey,
+		vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors, vmdLoginUser, vmdSSHKey,
 		vmdSSHPort, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand, vmdBootTimeout, vmdSSHProbeTimeout,
 		baseTemplate,
 	)
@@ -946,7 +949,7 @@ func buildProvisioner(
 	freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway string,
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
-	vmdVMRoot, vmdMasterImage, vmdMemory, vmdLoginUser, vmdSSHKey string,
+	vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	templateOptions freebsd.TemplateOptions,
@@ -996,6 +999,7 @@ func buildProvisioner(
 			vmdVMRoot,
 			vmdMasterImage,
 			vmdMemory,
+			vmdProcessors,
 			vmdLoginUser,
 			vmdSSHKey,
 			vmdSSHPort,

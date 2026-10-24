@@ -8,19 +8,19 @@ escalation, running the daemon, and troubleshooting.
 If you want the design/implementation notes, see [VMD.md](VMD.md).
 
 
-## David's Notes
+## Pre Steps
 
-1. The document should emphasize creating a non-root user `_wsd` to run the daemon.
-2. The document should also emphasize ensuring that all directories and files that the `_wsd` user will access are properly owned and have the correct permissions.
-3. The document should also mention that the `_wsd` user needs to have the necessary privileges to run `vmctl` and other required commands,  by configuring an escalation command like `doas` or `sudo`.
-4. Master image:  I make mine without the default OpenBSD partitioning scheme.  I use just a single partition `a` with no swap.  Swap is up to the admin.
+1. Create a non-root user `_wsd` to run the daemon.
+2. Ennsure that all directories and files that the `_wsd` user will access are properly owned and have the correct permissions.
+3. The `_wsd` user needs to have the necessary privileges to run `vmctl` and other required commands,  by configuring an escalation command like `doas` or `sudo`.
+4. Master image:  I make mine without the default OpenBSD partitioning scheme.  I use just a single partition `a` with no swap.
 
 ```text
 permit nopass _wsd as root cmd vmctl
 permit nopass _wsd as root cmd rm
 ```
 
-5. Include telling the user to add the `--debug` flag when running the `mcwsd` daemon for troubleshooting purposes even though there is little debugging info in anything but the provisioning process.
+5. Include the `--debug` flag when running the `mcwsd` daemon for troubleshooting purposes.
 
 ---
 
@@ -34,7 +34,9 @@ directly. Instead it treats the VM as a black box that exposes SSH:
    `vmctl create -b disk-master.qcow2 <vm-root>/wsd-<workspace>/disk.qcow2`.
    `-b` (not `-i`) makes this near-instant regardless of the master's size.
 2. **Start.** It runs
-   `vmctl start -L -B disk -d <disk> -m <memory> wsd-<workspace>`.
+   `vmctl start -L -B disk -d <disk> -m <memory> -p <processors> wsd-<workspace>`.
+   To accomodate vmctl without the `-p` option (OpenBSD 7.9 and earlier),
+   we only add it if processors is greater than 1.
    The `-L` flag attaches a **local interface**, so vmd(8) runs DHCP and
    assigns a predictable address derived from the VM ID (see §5).
 3. **Wait.** It polls the host ARP table, then TCP port 22, then runs a real
@@ -118,8 +120,6 @@ A practical way to build it:
 1. Create a reference disk and install OpenBSD into a VM (or install to a
    physical disk and import it):
 ```sh
-   doas vmctl create -s 20G /var/wsd/vms/openbsd/disk-master.qcow2
-   
   # ftp https://cdn.openbsd.org/pub/OpenBSD/7.9/amd64/install79.iso
   vmctl create  /var/wsd/vms/openbsd/disk-master.qcow2
   vmctl create -i /var/wsd/vms/openbsd/disk-master.qcow2 /var/wsd/vms/openbsd/wsd-master.qcow2
@@ -214,8 +214,8 @@ Compile and install the daemon.
 
 ```sh
 pkg_add go git
-git clone git@github.com:davidcrumpton/agentic.git
-cd agentic
+git clone git@github.com:davidcrumpton/mcwsd.git
+cd mcwsd
 go build -o wsd cmd/mcwsd/main.go 
 cp wsd /usr/local/bin/wsd
 mkdir /var/wsd/cache
@@ -340,6 +340,7 @@ su -m _wsd -c 'mcwsd daemon \
 | `-openbsd-vm-root` | `/var/wsd/vms/openbsd` | Base directory for VM disks |
 | `-openbsd-master-image` | `<vm-root>/disk-master.qcow2` | Golden image |
 | `-openbsd-memory` | `1G` | `vmctl -m` value per VM |
+| `-openbsd-processors` | `1` | `vmctl -p` value per VM (Will fail on OpenBSD 7.9 and earlier if greater than 1.) |
 | `-openbsd-login-user` | `root` | Guest SSH account |
 | `-openbsd-ssh-key` | `/var/wsd/agent_ed25519` | Private key for the guest |
 | `-openbsd-ssh-port` | `22` | Guest SSH port |

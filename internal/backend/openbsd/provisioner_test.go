@@ -20,6 +20,9 @@ func TestNewVMDProvisioner_Defaults(t *testing.T) {
 	if p.memory != defaultMemory {
 		t.Errorf("memory = %q, want %q", p.memory, defaultMemory)
 	}
+	if p.processors != defaultProcessors {
+		t.Errorf("processors = %d, want %d", p.processors, defaultProcessors)
+	}
 	if p.loginUser != defaultLoginUser {
 		t.Errorf("loginUser = %q, want %q", p.loginUser, defaultLoginUser)
 	}
@@ -38,8 +41,8 @@ func TestNewVMDProvisioner_Defaults(t *testing.T) {
 }
 
 func TestNewVMDProvisioner_Custom(t *testing.T) {
-	p := NewVMDProvisioner("/vms", "/vms/base.qcow2", "2G", "wsd", "/keys/k", 2222, "freebsd")
-	if p.vmRoot != "/vms" || p.masterImage != "/vms/base.qcow2" || p.memory != "2G" ||
+	p := NewVMDProvisioner("/vms", "/vms/base.qcow2", "2G", "1", "wsd", "/keys/k", 2222, "freebsd")
+	if p.vmRoot != "/vms" || p.masterImage != "/vms/base.qcow2" || p.memory != "2G" || p.processors != 1 ||
 		p.loginUser != "wsd" || p.sshKeyPath != "/keys/k" || p.sshPort != 2222 || p.guestOS != runtime.OSFreeBSD {
 		t.Fatalf("custom fields not preserved: %+v", p)
 	}

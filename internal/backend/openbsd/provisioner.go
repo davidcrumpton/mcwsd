@@ -86,6 +86,7 @@ func quoteArg(arg string) string {
 const (
 	defaultVMRoot      = "/var/wsd/vms/openbsd"
 	defaultMemory      = "1G"
+	defaultProcessors  = 1
 	defaultSSHPort     = 22
 	defaultLoginUser   = "root"
 	defaultBootTimeout = 5 * time.Minute
@@ -135,6 +136,7 @@ type VMDProvisioner struct {
 	memory string
 	// loginUser is the account the daemon SSHes into the guest as
 	// (default: root).
+	processors int
 	loginUser string
 	// sshKeyPath is the host path to the SSH private key matching the public
 	// key baked into the master image.
@@ -144,6 +146,8 @@ type VMDProvisioner struct {
 	// guestOS is the operating system running inside the VM. It is reported
 	// on the runtime handle so the agent picks the right package manager.
 	guestOS runtime.OS
+	// OpenBSD 8 support multiple processors
+	processors runtime.OS
 
 	// bootTimeout bounds how long Provision waits for a VM to become
 	// reachable. VMs boot slowly; the default is deliberately generous.
@@ -179,12 +183,15 @@ type VMDProvisioner struct {
 // NewVMDProvisioner creates a vmd(8) provisioner. Empty arguments take their
 // documented defaults. guestOS is the OS inside the VM ("openbsd", "freebsd",
 // "linux", ...); an empty value defaults to openbsd.
-func NewVMDProvisioner(vmRoot, masterImage, memory, loginUser, sshKeyPath string, sshPort int, guestOS string) *VMDProvisioner {
+func NewVMDProvisioner(vmRoot, masterImage, memory, processors, loginUser, sshKeyPath string, sshPort int, guestOS string) *VMDProvisioner {
 	if vmRoot == "" {
 		vmRoot = defaultVMRoot
 	}
 	if memory == "" {
 		memory = defaultMemory
+	}
+	if processors == "" {
+		processors = fmt.Sprintf("%d", defaultProcessors)
 	}
 	if loginUser == "" {
 		loginUser = defaultLoginUser
@@ -205,6 +212,7 @@ func NewVMDProvisioner(vmRoot, masterImage, memory, loginUser, sshKeyPath string
 		vmRoot:       vmRoot,
 		masterImage:  masterImage,
 		memory:       memory,
+		processors:    processors,
 		loginUser:    loginUser,
 		sshKeyPath:   sshKeyPath,
 		sshPort:      sshPort,
@@ -316,8 +324,8 @@ func (p *VMDProvisioner) Provision(ctx context.Context, spec runtime.ProvisionSp
 	diskDir := p.vmDiskDir(vmName)
 	diskPath := filepath.Join(diskDir, diskFileName)
 
-	debugf("provisioning VM %s: vmRoot=%s master=%s memory=%s loginUser=%s sshPort=%d guestOS=%s disk=%s workDir=%s hostEscalation=%q guestEscalation=%q",
-		vmName, p.vmRoot, p.masterImage, p.memory, p.loginUser, p.sshPort, p.guestOS, diskPath, spec.WorkDir, p.escalationCommand, p.guestEscalationCommand)
+	debugf("provisioning VM %s: vmRoot=%s master=%s memory=%s processors=%d loginUser=%s sshPort=%d guestOS=%s disk=%s workDir=%s hostEscalation=%q guestEscalation=%q",
+		vmName, p.vmRoot, p.masterImage, p.memory, p.processors, p.loginUser, p.sshPort, p.guestOS, diskPath, spec.WorkDir, p.escalationCommand, p.guestEscalationCommand)
 
 	if err := os.MkdirAll(diskDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create VM directory %s: %w", diskDir, err)
@@ -336,7 +344,15 @@ func (p *VMDProvisioner) Provision(ctx context.Context, spec runtime.ProvisionSp
 	// 2. Start the VM with a local interface (-L). vmd(8) runs DHCP on it and
 	// assigns a predictable address derived from the VM ID, so the daemon
 	// never has to guess or parse a lease. -B disk boots from the cloned disk.
+
+	// Backward compatibily:  Only OpenBSD 8.0 supports the -p option
+	// so, we will only add it if processors is greater than 1.  
+	// vmtctl doesn't have -p on 7.9 and earlier so it would error out.
+	
 	startArgs := []string{"start", "-L", "-B", "disk", "-d", diskPath, "-m", p.memory, vmName}
+	if p.processors > 1 {
+		startArgs = append(startArgs, "-p", fmt.Sprintf("%d", p.processors))
+	}
 	out, err := p.runPrivileged(ctx, "vmctl", startArgs...)
 	if err != nil {
 		p.cleanupFailedProvision(vmName, diskDir)
@@ -615,6 +631,9 @@ func (p *VMDProvisioner) validateConfig() error {
 	}
 	if strings.TrimSpace(p.memory) == "" {
 		return errors.New("openbsd VM memory size is required")
+	}
+	if p.processors < 1 || p.processors > 64 {
+		return fmt.Errorf("openbsd VM processors %d must be between 1 and 64", p.processors)
 	}
 	if strings.TrimSpace(p.sshKeyPath) == "" {
 		return errors.New("openbsd VM ssh key path is required")
