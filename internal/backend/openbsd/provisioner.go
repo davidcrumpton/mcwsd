@@ -183,7 +183,7 @@ type VMDProvisioner struct {
 // NewVMDProvisioner creates a vmd(8) provisioner. Empty arguments take their
 // documented defaults. guestOS is the OS inside the VM ("openbsd", "freebsd",
 // "linux", ...); an empty value defaults to openbsd.
-func NewVMDProvisioner(vmRoot, masterImage, memory, processors, loginUser, sshKeyPath string, sshPort int, guestOS string) *VMDProvisioner {
+func NewVMDProvisioner(vmRoot, masterImage, memory, processors int, loginUser, sshKeyPath string, sshPort int, guestOS string) *VMDProvisioner {
 	if vmRoot == "" {
 		vmRoot = defaultVMRoot
 	}
