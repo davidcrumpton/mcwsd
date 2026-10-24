@@ -136,10 +136,10 @@ type VMDProvisioner struct {
 	memory string
 	// loginUser is the account the daemon SSHes into the guest as
 	// (default: root).
-	
+
 	// OpenBSD 8 support multiple processors
 	processors int
-	loginUser string
+	loginUser  string
 	// sshKeyPath is the host path to the SSH private key matching the public
 	// key baked into the master image.
 	sshKeyPath string
@@ -148,7 +148,6 @@ type VMDProvisioner struct {
 	// guestOS is the operating system running inside the VM. It is reported
 	// on the runtime handle so the agent picks the right package manager.
 	guestOS runtime.OS
-
 
 	// bootTimeout bounds how long Provision waits for a VM to become
 	// reachable. VMs boot slowly; the default is deliberately generous.
@@ -184,15 +183,15 @@ type VMDProvisioner struct {
 // NewVMDProvisioner creates a vmd(8) provisioner. Empty arguments take their
 // documented defaults. guestOS is the OS inside the VM ("openbsd", "freebsd",
 // "linux", ...); an empty value defaults to openbsd.
-func NewVMDProvisioner(vmRoot, masterImage, memory, processors int, loginUser, sshKeyPath string, sshPort int, guestOS string) *VMDProvisioner {
+func NewVMDProvisioner(vmRoot, masterImage, memory string, processors int, loginUser, sshKeyPath string, sshPort int, guestOS string) *VMDProvisioner {
 	if vmRoot == "" {
 		vmRoot = defaultVMRoot
 	}
 	if memory == "" {
 		memory = defaultMemory
 	}
-	if processors > 1 {
-		processors = fmt.Sprintf("%d", defaultProcessors)
+	if processors == 0 {
+		processors = defaultProcessors
 	}
 	if loginUser == "" {
 		loginUser = defaultLoginUser
@@ -213,7 +212,7 @@ func NewVMDProvisioner(vmRoot, masterImage, memory, processors int, loginUser, s
 		vmRoot:       vmRoot,
 		masterImage:  masterImage,
 		memory:       memory,
-		processors:    processors,
+		processors:   processors,
 		loginUser:    loginUser,
 		sshKeyPath:   sshKeyPath,
 		sshPort:      sshPort,
@@ -347,13 +346,14 @@ func (p *VMDProvisioner) Provision(ctx context.Context, spec runtime.ProvisionSp
 	// never has to guess or parse a lease. -B disk boots from the cloned disk.
 
 	// Backward compatibily:  Only OpenBSD 8.0 supports the -p option
-	// so, we will only add it if processors is greater than 1.  
+	// so, we will only add it if processors is greater than 1.
 	// vmtctl doesn't have -p on 7.9 and earlier so it would error out.
-	
-	startArgs := []string{"start", "-L", "-B", "disk", "-d", diskPath, "-m", p.memory, vmName}
+
+	startArgs := []string{"start", "-L", "-B", "disk", "-d", diskPath, "-m", p.memory}
 	if p.processors > 1 {
 		startArgs = append(startArgs, "-p", fmt.Sprintf("%d", p.processors))
 	}
+	startArgs = append(startArgs, vmName)
 	out, err := p.runPrivileged(ctx, "vmctl", startArgs...)
 	if err != nil {
 		p.cleanupFailedProvision(vmName, diskDir)

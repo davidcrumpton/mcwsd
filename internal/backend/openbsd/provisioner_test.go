@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewVMDProvisioner_Defaults(t *testing.T) {
-	p := NewVMDProvisioner("", "", "", "", "", 0, "")
+	p := NewVMDProvisioner("", "", "", 0, "", "", 0, "")
 	if p.vmRoot != defaultVMRoot {
 		t.Errorf("vmRoot = %q, want %q", p.vmRoot, defaultVMRoot)
 	}
@@ -41,8 +41,8 @@ func TestNewVMDProvisioner_Defaults(t *testing.T) {
 }
 
 func TestNewVMDProvisioner_Custom(t *testing.T) {
-	p := NewVMDProvisioner("/vms", "/vms/base.qcow2", "2G", "1", "wsd", "/keys/k", 2222, "freebsd")
-	if p.vmRoot != "/vms" || p.masterImage != "/vms/base.qcow2" || p.memory != "2G" || p.processors != 1 ||
+	p := NewVMDProvisioner("/vms", "/vms/base.qcow2", "2G", 4, "wsd", "/keys/k", 2222, "freebsd")
+	if p.vmRoot != "/vms" || p.masterImage != "/vms/base.qcow2" || p.memory != "2G" || p.processors != 4 ||
 		p.loginUser != "wsd" || p.sshKeyPath != "/keys/k" || p.sshPort != 2222 || p.guestOS != runtime.OSFreeBSD {
 		t.Fatalf("custom fields not preserved: %+v", p)
 	}
@@ -176,6 +176,7 @@ func TestValidateWorkspaceIDAndVMName(t *testing.T) {
 // local-interface address.
 func TestProvisionFlow(t *testing.T) {
 	p, runner, rec := newTestProvisioner(t)
+	p.processors = 4
 
 	handle, err := p.Provision(context.Background(), runtime.ProvisionSpec{
 		WorkspaceID: "ws-abc",
@@ -219,6 +220,9 @@ func TestProvisionFlow(t *testing.T) {
 	}
 	if !runner.calledWith("-L -B disk") {
 		t.Errorf("start did not request a local interface booting from disk: %v", runner.calls)
+	}
+	if !runner.calledWith("-p 4 wsd-ws-abc") {
+		t.Errorf("start did not pass the processor count before the VM name: %v", runner.calls)
 	}
 
 	diskDir := p.vmDiskDir("wsd-ws-abc")
@@ -579,7 +583,7 @@ func newTestProvisioner(t *testing.T) (*VMDProvisioner, *fakeRunner, *recorder) 
 		t.Fatal(err)
 	}
 
-	p := NewVMDProvisioner(vmRoot, master, "1G", "root", key, 22, "openbsd")
+	p := NewVMDProvisioner(vmRoot, master, "1G", 1, "root", key, 22, "openbsd")
 	runner := &fakeRunner{
 		rec: rec,
 		outputs: map[string]string{

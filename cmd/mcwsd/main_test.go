@@ -42,7 +42,7 @@ func TestDaemonTemplateFlags(t *testing.T) {
 
 func TestBuildProvisionerWiresTemplate(t *testing.T) {
 	p, err := buildProvisioner("jail", "organization.tgz", "", "", "shared", "", "", 0, "", "",
-		"", "", "", "", "", 22, "", "", "", 0, 0,
+		"", "", "", 0, "", "", 22, "", "", "", 0, 0,
 		freebsd.TemplateOptions{BaseURL: "https://example.invalid/templates", VerifySignature: true})
 	if err != nil {
 		t.Fatal(err)

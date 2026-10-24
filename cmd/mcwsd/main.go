@@ -433,7 +433,7 @@ func runDaemon(
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
 	baseTemplate freebsd.TemplateOptions,
-	vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors int,vmdLoginUser, vmdSSHKey string,
+	vmdVMRoot, vmdMasterImage, vmdMemory string, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	provisioningHintsFile, workspaceBasePath string,
@@ -793,7 +793,7 @@ func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetent
 	provisioner, err := buildProvisioner(
 		runtimeFlag,
 		"", "", "", "", "", "", 0, "", "", // FreeBSD fields unused for cleanup (including new IP pool params and escalationCommand)
-		"", "", "", "", "", 22, "openbsd", "doas", "doas", 5*time.Minute, 20*time.Second, // vmd fields
+		"", "", "", 0, "", "", 22, "openbsd", "doas", "doas", 5*time.Minute, 20*time.Second, // vmd fields
 		freebsd.TemplateOptions{},
 	)
 	if err != nil {
@@ -949,7 +949,7 @@ func buildProvisioner(
 	freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway string,
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
-	vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
+	vmdVMRoot, vmdMasterImage, vmdMemory string, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	templateOptions freebsd.TemplateOptions,
