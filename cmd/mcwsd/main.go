@@ -433,7 +433,7 @@ func runDaemon(
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
 	baseTemplate freebsd.TemplateOptions,
-	vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors,vmdLoginUser, vmdSSHKey string,
+	vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors int,vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	provisioningHintsFile, workspaceBasePath string,
