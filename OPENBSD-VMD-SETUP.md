@@ -453,7 +453,7 @@ doas cap_mkdb /etc/login.conf
 
 ### RC Configuration /etc/rc.d/wsd
 
-Create the RC configuration file for the `wsd` daemon.
+Create the RC configuration file with perms 0755 for the `wsd` daemon.
 
 ```sh
 # Fixup:  Avoid /var
