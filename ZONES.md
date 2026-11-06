@@ -579,12 +579,12 @@ SMF manifest, `/var/svc/manifest/site/mcwsd.xml`:
     </dependency>
 
     <exec_method type="method" name="start"
-      exec="/usr/local/lib/wsd/start.sh" timeout="60">
+      exec="/usr/local/lib/wsd/start.sh" timeout_seconds="60">
       <method_context>
         <method_credential user="mcwsd" group="mcwsd" />
       </method_context>
     </exec_method>
-    <exec_method type="method" name="stop" exec=":kill" timeout="60"/>
+    <exec_method type="method" name="stop" exec=":kill" timeout_seconds="60"/>
 
     <property_group name="startd" type="framework">
       <propval name="duration" type="astring" value="contract"/>
@@ -659,6 +659,33 @@ mcwsd daemon --runtime zones ... --debug 2>&1 | grep -v '\[DEBUG\]'
 ---
 
 ## 8. Troubleshooting
+
+### Zones crash on boot: `SIGSYS` in `close_range`
+
+Some illumos/OpenIndiana builds ship a kernel whose zone syscall dispatch table
+is missing the `close_range(2)` syscall. On those hosts every freshly installed
+or cloned `ipkg` zone crashes on first boot: `/sbin/init` and `svc.startd` die
+with `SIGSYS` while calling `closefrom(3C)`, so the zone's SMF repository never
+starts and `zlogin <zone> svcs` reports `repository server unavailable`.
+`zoneadm list -cv` still shows the zone as `running` and `ping` from the zone
+works, which masks the failure.
+
+Confirm with `mdb(1)` on the zone's core file:
+
+```sh
+mdb /rpool1/zones/<zone>/root/core
+::status
+# status: process terminated by SIGSYS (Bad System Call)
+::stack
+# libc.so.1`__close_range+7 ... closefrom ... daemonize_start
+```
+
+There is no `mcwsd` workaround: the crash happens in the zone's own boot
+binaries before the daemon can run anything in it. Update the host to an
+illumos build where `close_range` is callable from non-global zones, or open an
+upstream issue. Confirm the installed kernel is current with
+`pkg refresh --full && pkg list system/kernel`; a package update will not help
+if that version is already the newest available.
 
 ### `/usr/lib/brand/ipkg/pkgcreatezone: not found`
 
@@ -758,6 +785,14 @@ pfexec zoneadm list -cv
 
 Do not rely on `solaris.zone.manage/<zone>` or `solaris.zone.login/<zone>` names
 on OpenIndiana; they are not consistently defined. Use the profile instead.
+
+> On some OpenIndiana builds the `Zone Management` profile is **empty** (its
+> `prof_attr` entry carries no `auths=` and there are no matching `exec_attr`
+> entries), so `pfexec zoneadm` silently runs without elevation and fails with
+> `Permission denied`. Check with `grep '^Zone Management' /etc/security/prof_attr`
+> and `grep -i 'zone' /etc/security/exec_attr`. If the profile is empty, use
+> `--zones-escalation sudo` and give the daemon account a `NOPASSWD` rule
+> (see [Escalation commands](#escalation-commands)) instead.
 
 ### `zlogin` cannot log in after first boot
 
