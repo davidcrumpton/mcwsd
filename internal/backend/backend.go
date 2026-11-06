@@ -930,7 +930,8 @@ func systemPackageCommands(os runtime.OS, baseImage string) (manager, install st
 	case runtime.OSFreeBSD:
 		return "pkg", "pkg install -y"
 	case runtime.OSIllumos, runtime.OSOpenIndiana:
-		return "pkg", "pkg install -y"
+		// OpenIndiana and Illumos use pkg(5) but the install command is just "pkg install" without "-y"
+		return "pkg", "pkg install"
 	case runtime.OSOpenBSD:
 		return "pkg_add", "pkg_add"
 	case runtime.OSNetBSD, runtime.OSMinix:

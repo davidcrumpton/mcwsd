@@ -35,7 +35,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.3.500"
+	Version         = "0.3.502"
 )
 
 func isRoot() bool {
