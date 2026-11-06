@@ -113,14 +113,21 @@ zlogin -C wsd-golden
 
 Complete `sysding` on the console, then install the baseline inside the zone:
 
+Ensure `/etc/nsswitch.conf` has `files dns` for `hosts:` and `networks:`. If the zone has no Internet access, configure a proxy as described in §5.7.
+
 ```sh
 zlogin wsd-golden pkg refresh --full
-zlogin wsd-golden pkg install -y git ca-certificates
+zlogin wsd-golden pkg install git system/ca-certificates
 zlogin wsd-golden git config --system --add safe.directory '*'
 ```
 
 Install the toolchains your workspaces need. `mcwsd` does not verify or install
 project dependencies; a missing tool only wastes the user's time later.
+
+```sh
+# example
+zlogin wsd-golden pkg install golang system/gcc system/make
+``` 
 
 Before using the zone as a template, clean per-instance state:
 

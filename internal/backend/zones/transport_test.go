@@ -171,7 +171,7 @@ func TestZonesExecTransportBootstrap(t *testing.T) {
 		t.Fatalf("calls = %d, want 1", len(fake.calls))
 	}
 	payload := fake.calls[0].args[len(fake.calls[0].args)-1]
-	for _, want := range []string{"pkg install -y git", "safe.directory"} {
+	for _, want := range []string{"pkg install git", "safe.directory"} {
 		if !strings.Contains(payload, want) {
 			t.Errorf("bootstrap payload missing %q: %s", want, payload)
 		}

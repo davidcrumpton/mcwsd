@@ -25,7 +25,7 @@ const zonesPath = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin"
 // software. git is required by the workspace commit flow; ca-certificates
 // supplies the trust store for HTTPS. safe.directory lets git operate on a
 // checkout owned by a different UID. Re-running it is harmless.
-const bootstrapScript = "pkg install -y git ca-certificates && git config --system --add safe.directory '*'"
+const bootstrapScript = "pkg install git system/ca-certificates && git config --system --add safe.directory '*'"
 
 // execRunner runs a host command and returns its captured result. It is a
 // field on the transport so tests can substitute a fake.
