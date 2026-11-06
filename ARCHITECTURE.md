@@ -26,6 +26,7 @@ type Provisioner interface {
 Implementations: `docker.DockerProvisioner` (Docker Engine API),
 `podman.PodmanProvisioner` (Podman CLI), `freebsd.FreeBSDJailProvisioner`
 (FreeBSD jails), `openbsd.VMDProvisioner` (OpenBSD VMD VMs),
+`zones.ZonesProvisioner` (OpenIndiana/illumos zones),
 `kubernetes.KubernetesProvisioner` (Kubernetes pods).
 
 Optional interfaces a Provisioner may implement:
@@ -51,7 +52,8 @@ type ExecTransport interface {
 
 Implementations: `docker.DockerExecTransport` (Docker Engine API),
 `podman.PodmanExecTransport` (Podman CLI), `freebsd.JexecTransport` (jexec),
-`openbsd.SSHExecTransport` (SSH), `kubernetes.KubectlExecTransport` (kubectl exec).
+`openbsd.SSHExecTransport` (SSH), `zones.ZonesExecTransport` (zlogin),
+`kubernetes.KubectlExecTransport` (kubectl exec).
 
 Optional interfaces an ExecTransport may implement:
 - `Bootstrapper` — one-time base setup inside a freshly provisioned runtime
@@ -113,11 +115,13 @@ type RuntimeHandle struct {
 ```
 
 **OS** identifies the runtime's operating system:
-- `OSLinux`, `OSFreeBSD`, `OSOpenBSD`, `OSNetBSD`, `OSMinix`, `OSDarwin`
+- `OSLinux`, `OSFreeBSD`, `OSOpenBSD`, `OSNetBSD`, `OSMinix`, `OSDarwin`,
+  `OSIllumos`, `OSOpenIndiana`
 
 **IsolationType** identifies the isolation model:
 - `IsolationContainer` (Docker, Podman)
 - `IsolationJail` (FreeBSD jails)
+- `IsolationZone` (OpenIndiana/illumos zones)
 - `IsolationVM` (OpenBSD VMD, Kubernetes pods)
 - `IsolationProcess` (process-based, future)
 
@@ -138,7 +142,8 @@ is orchestration. It lives in the workspace backend (`backend.Backend`)
 and is written entirely against the `Provisioner` / `ExecTransport`
 / `Forge` interfaces, not against any runtime-specific types. The backend
 holds a single `runtime.Provisioner` (Docker, Podman, FreeBSD jail, OpenBSD VMD,
-Kubernetes) and orchestrates it identically regardless of which one is in play.
+OpenIndiana/illumos zones, Kubernetes) and orchestrates it identically
+regardless of which one is in play.
 
 ## ProvisionSpec (`internal/runtime`)
 
@@ -151,8 +156,8 @@ type ProvisionSpec struct {
     WorkDir           string
     CacheMountPath    string
     WorkspaceBasePath string
-    Interface         string   // for runtimes requiring explicit network config (e.g., FreeBSD jails)
-    IP4Address        string   // for runtimes requiring explicit network config (e.g., FreeBSD jails)
+    Interface         string   // for runtimes requiring explicit network config (e.g., FreeBSD jails, illumos zones)
+    IP4Address        string   // for runtimes requiring explicit network config (e.g., FreeBSD jails, illumos zones)
 }
 ```
 

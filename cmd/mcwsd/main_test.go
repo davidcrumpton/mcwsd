@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/davidcrumpton/mcwsd/internal/backend/freebsd"
+	"github.com/davidcrumpton/mcwsd/internal/backend/zones"
 )
 
 func TestCurrentUserHomeDirIgnoresHOMEEnvironment(t *testing.T) {
@@ -40,9 +41,45 @@ func TestDaemonTemplateFlags(t *testing.T) {
 	}
 }
 
+func TestDaemonZonesFlags(t *testing.T) {
+	cmd := newDaemonCmd()
+	for _, name := range []string{
+		"zones-zonepath", "zones-brand", "zones-base-zone", "zones-network-mode",
+		"zones-interface", "zones-ip-address", "zones-defrouter",
+		"zones-ip-base-network", "zones-ip-pool-size", "zones-dns-servers",
+		"zones-escalation", "zones-boot-timeout",
+	} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("missing daemon flag %s", name)
+		}
+	}
+	for flag, want := range map[string]string{
+		"zones-brand":        "ipkg",
+		"zones-network-mode": "shared",
+		"zones-escalation":   "pfexec",
+	} {
+		if got := cmd.Flags().Lookup(flag).DefValue; got != want {
+			t.Errorf("%s default = %q, want %q", flag, got, want)
+		}
+	}
+}
+
+func TestBuildProvisionerWiresZones(t *testing.T) {
+	p, err := buildProvisioner("zones", "", "", "", "", "", "", 0, "", "",
+		"", "", "", 0, "", "", 22, "", "", "", 0, 0,
+		zones.Options{ZonePath: "/rpool1/zones"}, freebsd.TemplateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Name() != "zones" {
+		t.Fatalf("provisioner name = %q, want zones", p.Name())
+	}
+}
+
 func TestBuildProvisionerWiresTemplate(t *testing.T) {
 	p, err := buildProvisioner("jail", "organization.tgz", "", "", "shared", "", "", 0, "", "",
 		"", "", "", 0, "", "", 22, "", "", "", 0, 0,
+		zones.Options{},
 		freebsd.TemplateOptions{BaseURL: "https://example.invalid/templates", VerifySignature: true})
 	if err != nil {
 		t.Fatal(err)

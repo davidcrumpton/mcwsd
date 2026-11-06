@@ -10,7 +10,7 @@ See the [OpenWebUI Examples](./examples/OpenWebUI.md) directory for usage instru
 
 For those of you who look at projects on GitHub for ideas, I'll tell you some things that can be done differently so you can get started right.
 
-1. **Complexity**:  The multiple forge idea seemed great but if I did it again, I'd support Docker, Kubernetes, and one virtual machine solution.  This project is complex to test and maintain though I would have liked to support ~~Solaris~~ Illumos Zones, too.
+1. **Complexity**:  The multiple forge idea seemed great but if I did it again, I'd support Docker, Kubernetes, and one virtual machine solution.  This project is complex to test and maintain. It now also supports ~~Solaris~~ Illumos Zones.
 2. **Security**:  It could have been built to use non privileged accounts for the Jails/VMs.  FreeBSD's jexec accepts a `-u` option, OpenBSD is already non priveleged since it logs in as a non-privileged user thus doas could have a list of approved commands to call.  The OCI containers are harder due to so many just running as root, but still not impossible to do.
 3. **Audit Security**:  It could have been built with better audit trails and logging to track all actions taken by the AI but that would exclude bad things in code it could execute in the container giving the admin a false sense of security.
 4. **MCP Server**:  I should have built it into the main daemon instead of making an API which woud have elimiated `mcwsd.py` but there are reasons why direct tool use from AI clients is preferred.  I also wouldn't have to support the `mcphe` plugin for `mcwsd`.  The MCP protocol allows compatibily with all supported AI systems.
@@ -26,11 +26,12 @@ For those of you who look at projects on GitHub for ideas, I'll tell you some th
 - Go 1.25 or later
 - Docker, Podman, or Kubernetes (for container support)
 - FreeBSD or OpenBSD (for jail/VMD support)
+- OpenIndiana/illumos (for zones support)
 
 ## Features
 
 - **Automated Environment Detection**: Automatically detects project types including Go, Rust, Python (via `pyproject.toml` or `requirements.txt`), and Node.js (via `package.json`). Supports `.devcontainer` configurations.
-- **Sandboxed Execution**: Utilizes OCI containers (docker, podman, kubernetes), FreeBSD jails, and OpenBSD VMD for sandboxed execution.
+- **Sandboxed Execution**: Utilizes OCI containers (docker, podman, kubernetes), FreeBSD jails, OpenBSD VMD, and OpenIndiana/illumos zones for sandboxed execution.
 - **Smart Caching**: Implements a high-performance caching mechanism based on dependency manifests (e.g., `go.sum`, `package-lock.json`) to skip redundant dependency installations.
 - **Secure Secret Injection**: Provides short-lived, single-use environment variable injection for sensitive credentials during command execution.
 - **Artifact Retrieval**: Easily retrieve changes from workspaces via unified `git diff` patches and untracked file lists.
@@ -62,6 +63,7 @@ Before running the daemon, ensure you have:
 > **Note:** For alternative runtimes:
 > - FreeBSD jails: see [`FREEBSD-SETUP.md`](FREEBSD-SETUP.md)
 > - OpenBSD vmd VMs: see [`OPENBSD-VMD-SETUP.md`](OPENBSD-VMD-SETUP.md)
+> - OpenIndiana/illumos zones: see [`ZONES.md`](ZONES.md)
 
 ### Running the Daemon
 

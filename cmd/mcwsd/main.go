@@ -24,6 +24,7 @@ import (
 	"github.com/davidcrumpton/mcwsd/internal/backend/kubernetes"
 	"github.com/davidcrumpton/mcwsd/internal/backend/openbsd"
 	"github.com/davidcrumpton/mcwsd/internal/backend/podman"
+	"github.com/davidcrumpton/mcwsd/internal/backend/zones"
 	"github.com/davidcrumpton/mcwsd/internal/capacity"
 	"github.com/davidcrumpton/mcwsd/internal/gitpush"
 	"github.com/davidcrumpton/mcwsd/internal/jobs"
@@ -34,7 +35,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.3.495"
+	Version         = "0.3.500"
 )
 
 func isRoot() bool {
@@ -137,6 +138,10 @@ func newDaemonCmd() *cobra.Command {
 		vmdGuestEscalationCommand string
 		vmdBootTimeout            time.Duration
 		vmdSSHProbeTimeout        time.Duration
+
+		// illumos / OpenIndiana zones (runtime=zones|openindiana only)
+		zonesOpts       zones.Options
+		zonesDNSServers string
 	)
 
 	// ---- backend / daemon flags ----
@@ -207,10 +212,11 @@ serves the workspace API, and cleans up stale workspaces periodically.
 
 Flags are grouped into three concerns:
 
-	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, jail, vmd)
+	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, jail, vmd, zones)
   Backend      -- daemon lifecycle, networking, cache, capacity gating
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			zonesOpts.DNSServers = splitCommaList(zonesDNSServers)
 			return runDaemon(
 				runtimeFlag,
 				freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway,
@@ -219,6 +225,7 @@ Flags are grouped into three concerns:
 				baseTemplate,
 				vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors, vmdLoginUser, vmdSSHKey,
 				vmdSSHPort, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand, vmdBootTimeout, vmdSSHProbeTimeout,
+				zonesOpts,
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
 				tlsCertFile, tlsKeyFile,
@@ -247,7 +254,7 @@ Flags are grouped into three concerns:
 	f := cmd.Flags()
 
 	// -- Provisioner --
-	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, jail (FreeBSD), or vmd/openbsd (OpenBSD); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
+	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, jail (FreeBSD), vmd/openbsd (OpenBSD), or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
 
 	// FreeBSD jail settings. release has a sensible default. The interface
 	// is only needed when a fixed IPv4 address is pinned; with no address
@@ -315,6 +322,34 @@ Flags are grouped into three concerns:
 		"How long to wait for a freshly started VM to accept SSH (vmd runtime only)")
 	f.DurationVar(&vmdSSHProbeTimeout, "openbsd-ssh-probe-timeout", 20*time.Second,
 		"Bound on a single SSH readiness probe while waiting for a VM to boot (vmd runtime only)")
+
+	// illumos / OpenIndiana zones (zones runtime only). The zonepath parent
+	// must already be a ZFS dataset; mcwsd creates per-zone datasets with
+	// zoneadm but never creates the pool or the parent.
+	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
+		"Parent ZFS dataset for workspace zone roots, e.g. /rpool1/zones (zones runtime only)")
+	f.StringVar(&zonesOpts.Brand, "zones-brand", "ipkg",
+		"Zone brand used by zoneadm install (zones runtime only)")
+	f.StringVar(&zonesOpts.BaseZone, "zones-base-zone", "",
+		"Installed, halted golden zone cloned for each workspace; empty uses zoneadm install (zones runtime only)")
+	f.StringVar(&zonesOpts.NetworkMode, "zones-network-mode", "shared",
+		"Zone network mode: shared or exclusive (zones runtime only)")
+	f.StringVar(&zonesOpts.Interface, "zones-interface", "",
+		"Global-zone data link for shared-IP zones, or the VNIC uplink for exclusive-IP zones (zones runtime only)")
+	f.StringVar(&zonesOpts.IPAddress, "zones-ip-address", "",
+		"Shared-IP address, or exclusive-IP static address/prefix; empty uses the global address (shared) or DHCP (exclusive) (zones runtime only)")
+	f.StringVar(&zonesOpts.DefRouter, "zones-defrouter", "",
+		"Default router for static zone addressing (zones runtime only)")
+	f.StringVar(&zonesOpts.IPBaseNetwork, "zones-ip-base-network", "",
+		"Base network in CIDR notation for automatic address allocation, e.g. 192.168.1.200/24 (zones runtime only)")
+	f.IntVar(&zonesOpts.IPPoolSize, "zones-ip-pool-size", 0,
+		"Number of addresses to allocate from --zones-ip-base-network (zones runtime only)")
+	f.StringVar(&zonesDNSServers, "zones-dns-servers", "",
+		"Comma-separated DNS server IPs for zones; defaults to the global zone resolver (zones runtime only)")
+	f.StringVar(&zonesOpts.Escalation, "zones-escalation", "pfexec",
+		"Privilege escalation command for zonecfg/zoneadm/zlogin/dladm: pfexec, sudo, doas, or empty to run directly (zones runtime only)")
+	f.DurationVar(&zonesOpts.BootTimeout, "zones-boot-timeout", 5*time.Minute,
+		"How long to wait for a freshly booted zone to accept zlogin (zones runtime only)")
 
 	// -- Backend --
 	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", "/etc/wsd/provisioning_hints.json",
@@ -436,6 +471,7 @@ func runDaemon(
 	vmdVMRoot, vmdMasterImage, vmdMemory string, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
+	zonesOpts zones.Options,
 	provisioningHintsFile, workspaceBasePath string,
 	bindAddress string, port int, cacheDir string, maxCacheGB int,
 	stateFile string, workspaceTTL, pruneInterval time.Duration, pruneOnStartup bool,
@@ -544,6 +580,7 @@ func runDaemon(
 		escalationCommand,
 		vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors, vmdLoginUser, vmdSSHKey,
 		vmdSSHPort, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand, vmdBootTimeout, vmdSSHProbeTimeout,
+		zonesOpts,
 		baseTemplate,
 	)
 	if err != nil {
@@ -568,6 +605,9 @@ func runDaemon(
 	// print freebsd network mode if FreeBSD
 	if freebsdNetworkMode != "" && runtimeFlag == "freebsd" {
 		internal.Log.Info("freebsd_network_mode", "mode", freebsdNetworkMode)
+	}
+	if runtimeFlag == "zones" || runtimeFlag == "openindiana" {
+		internal.Log.Info("zones_network_mode", "mode", zonesOpts.NetworkMode, "zonepath", zonesOpts.ZonePath)
 	}
 
 	// Load administrator-authored environment hints, if any. A missing file is
@@ -740,6 +780,7 @@ func newCleanupCmd() *cobra.Command {
 		doPrune      bool
 		workspaceTTL time.Duration
 		jobRetention time.Duration
+		zonesOpts    zones.Options
 	)
 
 	cmd := &cobra.Command{
@@ -755,7 +796,7 @@ func newCleanupCmd() *cobra.Command {
 
 Both flags may be combined. Neither requires forge configuration.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCleanup(stateFile, jobsFile, runtimeFlag, workspaceTTL, jobRetention, doOrphans, doPrune)
+			return runCleanup(stateFile, jobsFile, runtimeFlag, workspaceTTL, jobRetention, doOrphans, doPrune, zonesOpts)
 		},
 	}
 
@@ -767,7 +808,15 @@ Both flags may be combined. Neither requires forge configuration.`,
 	f.DurationVar(&jobRetention, "job-retention", 24*time.Hour,
 		"Remove finished job records older than this")
 	f.StringVar(&runtimeFlag, "runtime", "docker",
-		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, jail, or vmd/openbsd")
+		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, jail, vmd/openbsd, or zones/openindiana")
+	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
+		"Parent ZFS dataset for workspace zones (zones runtime only; needed for orphan resource cleanup)")
+	f.StringVar(&zonesOpts.NetworkMode, "zones-network-mode", "shared",
+		"Zone network mode used when the state file was written: shared or exclusive (zones runtime only)")
+	f.StringVar(&zonesOpts.BaseZone, "zones-base-zone", "",
+		"Golden zone to preserve during orphan cleanup (zones runtime only)")
+	f.StringVar(&zonesOpts.Escalation, "zones-escalation", "pfexec",
+		"Privilege escalation command for zoneadm/zonecfg/dladm (zones runtime only)")
 	f.BoolVar(&doOrphans, "orphans", false,
 		"Force-remove workspaces left behind by a previous not-cleanly-shut-down daemon run")
 	f.BoolVar(&doPrune, "prune", false,
@@ -778,7 +827,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 	return cmd
 }
 
-func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool) error {
+func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool, zonesOpts zones.Options) error {
 	if !doOrphans && !doPrune {
 		return fmt.Errorf("specify at least one of --orphans or --prune")
 	}
@@ -794,6 +843,7 @@ func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetent
 		runtimeFlag,
 		"", "", "", "", "", "", 0, "", "", // FreeBSD fields unused for cleanup (including new IP pool params and escalationCommand)
 		"", "", "", 0, "", "", 22, "openbsd", "doas", "doas", 5*time.Minute, 20*time.Second, // vmd fields
+		zonesOpts,
 		freebsd.TemplateOptions{},
 	)
 	if err != nil {
@@ -942,6 +992,22 @@ func newVersionCmd() *cobra.Command {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+// splitCommaList parses a comma-separated flag value, trimming whitespace and
+// dropping empty entries.
+func splitCommaList(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // buildProvisioner constructs the appropriate runtime.Provisioner from flags.
 // It is called by both the daemon and cleanup subcommands.
 func buildProvisioner(
@@ -952,6 +1018,7 @@ func buildProvisioner(
 	vmdVMRoot, vmdMasterImage, vmdMemory string, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
 	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
 	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
+	zonesOpts zones.Options,
 	templateOptions freebsd.TemplateOptions,
 ) (runtime.Provisioner, error) {
 	switch runtimeFlag {
@@ -1008,6 +1075,9 @@ func buildProvisioner(
 			WithGuestEscalationCommand(vmdGuestEscalationCommand).
 			WithBootTimeout(vmdBootTimeout).
 			WithSSHProbeTimeout(vmdSSHProbeTimeout), nil
+	case "zones", "openindiana":
+		// illumos / OpenIndiana zones
+		return zones.NewZonesProvisioner(zonesOpts), nil
 	default:
 		// Docker (default)
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())

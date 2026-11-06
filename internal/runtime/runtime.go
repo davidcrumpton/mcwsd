@@ -19,12 +19,14 @@ import (
 type OS string
 
 const (
-	OSLinux   OS = "linux"
-	OSFreeBSD OS = "freebsd"
-	OSOpenBSD OS = "openbsd"
-	OSNetBSD  OS = "netbsd"
-	OSMinix   OS = "minix"
-	OSDarwin  OS = "darwin"
+	OSLinux       OS = "linux"
+	OSFreeBSD     OS = "freebsd"
+	OSOpenBSD     OS = "openbsd"
+	OSNetBSD      OS = "netbsd"
+	OSMinix       OS = "minix"
+	OSDarwin      OS = "darwin"
+	OSIllumos     OS = "illumos"
+	OSOpenIndiana OS = "openindiana"
 )
 
 // IsolationType identifies the kind of isolation a RuntimeHandle provides.
@@ -33,6 +35,7 @@ type IsolationType string
 const (
 	IsolationContainer IsolationType = "container"
 	IsolationJail      IsolationType = "jail"
+	IsolationZone      IsolationType = "zone"
 	IsolationVM        IsolationType = "vm"
 	IsolationProcess   IsolationType = "process"
 )

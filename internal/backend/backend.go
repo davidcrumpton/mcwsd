@@ -39,8 +39,8 @@ func (l *backendLogger) Warn(msg string, keysAndValues ...interface{}) {
 }
 
 // Backend implements internal.WorkspaceBackend by orchestrating a
-// runtime.Provisioner (Docker, Podman, FreeBSD jail, OpenBSD VMD, or Kubernetes)
-// together with caching, environment detection, secrets, and git push logic
+// runtime.Provisioner (Docker, Podman, FreeBSD jail, OpenBSD VMD, illumos
+// zones, or Kubernetes) together with caching, environment detection, secrets, and git push logic
 // that apply regardless of which runtime provisioned the workspace.
 //
 // Extension point: every runtime-specific API call has been moved into the
@@ -928,6 +928,8 @@ func cloneRepo(ctx context.Context, dir, url, ref string, gitCfg gitpush.Config)
 func systemPackageCommands(os runtime.OS, baseImage string) (manager, install string) {
 	switch os {
 	case runtime.OSFreeBSD:
+		return "pkg", "pkg install -y"
+	case runtime.OSIllumos, runtime.OSOpenIndiana:
 		return "pkg", "pkg install -y"
 	case runtime.OSOpenBSD:
 		return "pkg_add", "pkg_add"
