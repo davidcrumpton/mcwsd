@@ -450,10 +450,13 @@ func (p *ZonesProvisioner) DestroyByID(ctx context.Context, zoneName string) err
 	}
 
 	// A zone left "mounted" (e.g. a clone with -X that never booted) must be
-	// unmounted before it can be uninstalled.
+	// unmounted before it can be uninstalled. The root is a legacy mount that
+	// zoneadm uninstall leaves behind, so unmount it explicitly first to avoid
+	// the "Device busy" it would otherwise report.
 	if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "unmount"); err != nil && !isBenignZoneError(err) {
 		debugf("unmount zone %s reported: %v (continuing)", zoneName, err)
 	}
+	p.unmountZoneRoot(ctx, zoneName)
 
 	if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "uninstall", "-F"); err != nil && !isBenignZoneError(err) {
 		// Leave the config in place so a later retry can finish the job.
@@ -477,17 +480,19 @@ func (p *ZonesProvisioner) DestroyByID(ctx context.Context, zoneName string) err
 	return nil
 }
 
-// destroyZoneDatasets removes the zone's ZFS datasets and, when the zone was
-// cloned from a golden zone, the source snapshot zoneadm clone left on it.
-// It is best-effort: the zone may not have been installed or cloned yet.
-func (p *ZonesProvisioner) destroyZoneDatasets(ctx context.Context, zoneName string) {
-	// The zone root is a "legacy" ZFS mount that zoneadm uninstall leaves
-	// mounted (zfs unmount refuses legacy mounts). Unmount it first so zfs
-	// destroy can remove the datasets.
+// unmountZoneRoot unmounts the zone's legacy root mount (if present) so the
+// following uninstall/destroy steps do not report "Device busy".
+func (p *ZonesProvisioner) unmountZoneRoot(ctx context.Context, zoneName string) {
 	root := filepath.Join(p.zonePath(zoneName), "root")
 	if _, err := p.runPrivileged(ctx, "umount", root); err != nil {
 		debugf("umount %s reported: %v", root, err)
 	}
+}
+
+// destroyZoneDatasets removes the zone's ZFS datasets and, when the zone was
+// cloned from a golden zone, the source snapshot zoneadm clone left on it.
+// It is best-effort: the zone may not have been installed or cloned yet.
+func (p *ZonesProvisioner) destroyZoneDatasets(ctx context.Context, zoneName string) {
 	dataset := strings.TrimPrefix(p.zonePath(zoneName), "/")
 	if _, err := p.runPrivileged(ctx, "zfs", "destroy", "-r", dataset); err != nil {
 		debugf("zfs destroy %s reported: %v", dataset, err)
@@ -913,6 +918,7 @@ func (p *ZonesProvisioner) cleanupFailedProvision(ctx context.Context, zoneName 
 	// no-op for that state, so also unmount before uninstalling.
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "halt")
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "unmount")
+	p.unmountZoneRoot(ctx, zoneName)
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "uninstall", "-F")
 	_, _ = p.runPrivileged(ctx, "zonecfg", "-z", zoneName, "delete", "-F")
 	p.destroyZoneDatasets(ctx, zoneName)
