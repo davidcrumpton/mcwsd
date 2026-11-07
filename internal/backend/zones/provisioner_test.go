@@ -220,8 +220,11 @@ func TestZonesProvisionerClonesGoldenZone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if !fr.called("zoneadm", "-z", "wsd-ws-test", "clone", "wsd-golden") {
+	if !fr.called("zoneadm", "-z", "wsd-ws-test", "clone", "-X", "wsd-golden") {
 		t.Error("zoneadm clone was not called")
+	}
+	if !fr.called("zoneadm", "-z", "wsd-ws-test", "unmount") {
+		t.Error("cloned zone was not unmounted before boot")
 	}
 	for _, want := range []string{"create -t wsd-golden", "remove net", "remove fs"} {
 		if !strings.Contains(fr.zonecfg, want) {

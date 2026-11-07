@@ -364,7 +364,12 @@ func (p *ZonesProvisioner) Provision(ctx context.Context, spec runtime.Provision
 
 	if p.opts.BaseZone != "" {
 		debugf("cloning zone %s from golden zone %s", zoneName, p.opts.BaseZone)
-		if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "clone", p.opts.BaseZone); err != nil {
+		// -X skips the brand's sys-unconfig so the workspace keeps the golden
+		// zone's completed identity (root password, host keys, sysding) and
+		// boots without re-running sysding. Without it the ipkg brand's
+		// system-unconfigure step can fail on a golden zone that has not been
+		// freshly unconfigured.
+		if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "clone", "-X", p.opts.BaseZone); err != nil {
 			p.cleanupFailedProvision(ctx, zoneName)
 			return nil, fmt.Errorf("failed to clone zone %s from %s: %w", zoneName, p.opts.BaseZone, err)
 		}
@@ -384,6 +389,16 @@ func (p *ZonesProvisioner) Provision(ctx context.Context, spec runtime.Provision
 	if err := p.writeZoneResolvConf(ctx, zonePath); err != nil {
 		p.cleanupFailedProvision(ctx, zoneName)
 		return nil, err
+	}
+
+	// A zone cloned with -X is left "mounted" (the clone script mounts the
+	// root and skips sys-unconfig). zoneadm boot rejects that state, so
+	// unmount it back to "installed" first.
+	if p.opts.BaseZone != "" {
+		if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "unmount"); err != nil {
+			p.cleanupFailedProvision(ctx, zoneName)
+			return nil, fmt.Errorf("failed to unmount cloned zone %s: %w", zoneName, err)
+		}
 	}
 
 	debugf("booting zone %s", zoneName)
@@ -432,6 +447,12 @@ func (p *ZonesProvisioner) DestroyByID(ctx context.Context, zoneName string) err
 
 	if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "halt"); err != nil && !isBenignZoneError(err) {
 		debugf("halt zone %s reported: %v (continuing)", zoneName, err)
+	}
+
+	// A zone left "mounted" (e.g. a clone with -X that never booted) must be
+	// unmounted before it can be uninstalled.
+	if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "unmount"); err != nil && !isBenignZoneError(err) {
+		debugf("unmount zone %s reported: %v (continuing)", zoneName, err)
 	}
 
 	if _, err := p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "uninstall", "-F"); err != nil && !isBenignZoneError(err) {
@@ -822,7 +843,10 @@ func (p *ZonesProvisioner) zoneState(ctx context.Context, zoneName string) (stri
 
 func (p *ZonesProvisioner) cleanupFailedProvision(ctx context.Context, zoneName string) {
 	debugf("cleaning up failed provision for zone %s", zoneName)
+	// A zone cloned with -X is left "mounted", not "installed"; halt is a
+	// no-op for that state, so also unmount before uninstalling.
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "halt")
+	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "unmount")
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "uninstall", "-F")
 	_, _ = p.runPrivileged(ctx, "zonecfg", "-z", zoneName, "delete", "-F")
 	if p.opts.NetworkMode == "exclusive" {
