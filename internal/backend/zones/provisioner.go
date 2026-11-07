@@ -781,21 +781,38 @@ func (p *ZonesProvisioner) resolvConf() ([]byte, error) {
 }
 
 func (p *ZonesProvisioner) configureExclusiveNetwork(ctx context.Context, zoneName, vnic, ipAddress, router string) error {
-	script := "ipadm create-ip " + vnic + " 2>/dev/null || true; "
+	// Guard each step so the script is idempotent: the zone's datalink/ipadm
+	// services are not necessarily ready the moment zlogin first succeeds, and
+	// the whole script is retried below until it configures cleanly.
+	script := "ipadm show-if " + vnic + " >/dev/null 2>&1 || ipadm create-ip " + vnic + "; "
 	if ipAddress == "" {
-		script += "ipadm create-addr -T dhcp " + vnic + "/v4"
+		script += "ipadm show-addr " + vnic + "/v4 >/dev/null 2>&1 || ipadm create-addr -T dhcp " + vnic + "/v4"
 	} else {
-		script += "ipadm create-addr -T static -a " + ipAddress + " " + vnic + "/v4"
+		script += "ipadm show-addr " + vnic + "/v4 >/dev/null 2>&1 || ipadm create-addr -T static -a " + ipAddress + " " + vnic + "/v4"
 		if router != "" {
-			script += " && route -p add default " + router
+			script += "; route -p add default " + router + " 2>/dev/null || true"
 		}
 	}
 	script += "; ifconfig " + vnic + " up"
 
-	if _, err := p.runPrivileged(ctx, "zlogin", zoneName, "sh", "-c", script); err != nil {
-		return fmt.Errorf("failed to configure exclusive networking in zone %s: %w", zoneName, err)
+	deadline := time.Now().Add(p.opts.BootTimeout)
+	var lastErr error
+	for {
+		if _, err := p.runPrivileged(ctx, "zlogin", zoneName, "sh", "-c", script); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(p.opts.PollInterval):
+		}
 	}
-	return nil
+	return fmt.Errorf("failed to configure exclusive networking in zone %s: %w", zoneName, lastErr)
 }
 
 func (p *ZonesProvisioner) waitForZoneReady(ctx context.Context, zoneName string) error {
