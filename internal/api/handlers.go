@@ -442,11 +442,13 @@ type CommitAndPRRequest struct {
 // CommitAndPRResponse is the response for POST /workspaces/{id}/commit-and-pr.
 // Error carries a non-fatal reason the PR was not opened (e.g. "no changes to
 // commit"); it is returned with HTTP 200 so the caller can surface it rather
-// than seeing an empty branch/mr_url with no explanation.
+// than seeing an empty branch/mr_url with no explanation. NoChangesDetail
+// accompanies the no-changes case with a factual snapshot of the working tree.
 type CommitAndPRResponse struct {
-	Branch string `json:"branch"`
-	MRURL  string `json:"mr_url"`
-	Error  string `json:"error,omitempty"`
+	Branch          string `json:"branch"`
+	MRURL           string `json:"mr_url"`
+	Error           string `json:"error,omitempty"`
+	NoChangesDetail string `json:"no_changes_detail,omitempty"`
 }
 
 func (s *Server) handleCommitAndPR(w http.ResponseWriter, r *http.Request) {
@@ -473,9 +475,10 @@ func (s *Server) handleCommitAndPR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := CommitAndPRResponse{
-		Branch: result.Branch,
-		MRURL:  result.MRURL,
-		Error:  result.Error,
+		Branch:          result.Branch,
+		MRURL:           result.MRURL,
+		Error:           result.Error,
+		NoChangesDetail: result.NoChangesDetail,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

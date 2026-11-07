@@ -174,6 +174,14 @@ type CommitAndPRResult struct {
 	Branch string `json:"branch"`
 	MRURL  string `json:"mr_url"`
 	Error  string `json:"error,omitempty"`
+
+	// NoChangesDetail carries a factual snapshot of the working tree (git
+	// status --porcelain --ignored output) when there was nothing to commit.
+	// It exists so the caller can see *why* nothing was staged — most commonly
+	// because a newly created file is excluded by .gitignore — and decide how
+	// to proceed, rather than the daemon forcing a choice (e.g. force-adding
+	// ignored files) on them.
+	NoChangesDetail string `json:"no_changes_detail,omitempty"`
 }
 
 // FileEntry describes a single entry returned by ListFiles.

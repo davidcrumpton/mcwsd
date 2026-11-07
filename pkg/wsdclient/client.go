@@ -177,10 +177,13 @@ type CommitAndPRRequest struct {
 // CommitAndPRResponse is the response from CommitAndPR(). Error is set when
 // the daemon declined to open the PR for a non-fatal reason (e.g. there were
 // no changes to commit); Branch and MRURL are empty in that case.
+// NoChangesDetail carries a factual snapshot of the working tree when the
+// no-changes case applies.
 type CommitAndPRResponse struct {
-	Branch string `json:"branch"`
-	MRURL  string `json:"mr_url"`
-	Error  string `json:"error,omitempty"`
+	Branch          string `json:"branch"`
+	MRURL           string `json:"mr_url"`
+	Error           string `json:"error,omitempty"`
+	NoChangesDetail string `json:"no_changes_detail,omitempty"`
 }
 
 // CommitAndPR commits the workspace's current changes, pushes them to a

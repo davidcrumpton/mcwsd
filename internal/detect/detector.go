@@ -3,6 +3,7 @@ package detect
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -120,17 +121,19 @@ func (d *Detector) detectDevcontainer(repoPath string) (*internal.EnvironmentPro
 }
 
 func (d *Detector) detectGo(repoPath string) (*internal.EnvironmentProfile, error) {
-	goModPath := filepath.Join(repoPath, "go.mod")
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		return nil, err
-	}
-
 	// Extract Go version from "go X.Y" directive
 	version := "1.21" // default
-	re := regexp.MustCompile(`(?m)^go\s+(\d+\.\d+)`)
-	if matches := re.FindStringSubmatch(string(data)); len(matches) > 1 {
-		version = matches[1]
+
+	goModPath := filepath.Join(repoPath, "go.mod")
+	data, err := os.ReadFile(goModPath)
+	if err == nil {
+		re := regexp.MustCompile(`(?m)^go\s+(\d+\.\d+)`)
+		if matches := re.FindStringSubmatch(string(data)); len(matches) > 1 {
+			version = matches[1]
+		}
+	} else if !hasGoFiles(repoPath) {
+		// No go.mod and no .go source files anywhere: not a Go repository.
+		return nil, err
 	}
 
 	return &internal.EnvironmentProfile{
@@ -140,6 +143,31 @@ func (d *Detector) detectGo(repoPath string) (*internal.EnvironmentProfile, erro
 		InstallCommand: "go mod download",
 		BaseImage:      fmt.Sprintf("%sgolang:%s", dockerHubLibrary, version),
 	}, nil
+}
+
+// hasGoFiles reports whether repoPath contains any .go source file, so a Go
+// repository without a go.mod (single-file programs, pre-module layouts) is
+// still recognized. .git and vendor subtrees are skipped.
+func hasGoFiles(repoPath string) bool {
+	found := false
+	_ = filepath.WalkDir(repoPath, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			name := entry.Name()
+			if name == ".git" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), ".go") {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 func (d *Detector) detectRust(repoPath string) (*internal.EnvironmentProfile, error) {

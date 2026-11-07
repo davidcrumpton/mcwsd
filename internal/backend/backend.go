@@ -670,11 +670,16 @@ func (b *Backend) CommitAndPR(ctx context.Context, ws *internal.Workspace, req i
 	if err == nil && statusResult.ExitCode == 0 && statusResult.Stdout == "" {
 		// Don't fail hard here, just return an error message that can be displayed in the UI.
 		// We have to do something to indicate that the PR couldn't be created
-		// without blowing up the whole request
+		// without blowing up the whole request. Accompany it with a factual
+		// snapshot of the working tree (including ignored files) so the caller
+		// can see *why* nothing was staged — most often a newly created file
+		// that .gitignore excludes — and decide what to do, rather than the
+		// daemon force-adding files on their behalf.
 		pushResult := internal.CommitAndPRResult{
-			MRURL:  "",
-			Branch: "",
-			Error:  "no changes to commit: did your edit return zero but change nothing?",
+			MRURL:           "",
+			Branch:          "",
+			Error:           "no changes to commit",
+			NoChangesDetail: b.gitStatusDetail(ctx, wsState),
 		}
 		return &pushResult, nil
 	}
@@ -755,6 +760,22 @@ func (b *Backend) CommitAndPR(ctx context.Context, ws *internal.Workspace, req i
 		Branch: pushResult.Branch,
 		MRURL:  pushResult.MRURL,
 	}, nil
+}
+
+// gitStatusDetail returns a short factual snapshot of the working tree to
+// accompany a "no changes to commit" result. It includes ignored files (via
+// --ignored) because those are the most common reason a change appears to be
+// missing: a newly created file that the repo's .gitignore excludes is
+// invisible to `git add -A` and therefore to this commit. An empty string is
+// returned when git can't produce a status (the caller still gets the plain
+// "no changes to commit" error).
+func (b *Backend) gitStatusDetail(ctx context.Context, wsState *workspaceState) string {
+	res, err := wsState.handle.Transport.Exec(ctx,
+		[]string{"git", "status", "--porcelain", "--ignored"}, wsState.handle.WorkDir, nil)
+	if err != nil || res.ExitCode != 0 {
+		return ""
+	}
+	return strings.TrimSpace(res.Stdout)
 }
 
 // Destroy tears down a workspace.

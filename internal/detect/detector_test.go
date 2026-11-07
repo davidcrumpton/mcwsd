@@ -89,6 +89,55 @@ func TestDetect_GoMod_DefaultVersion(t *testing.T) {
 	}
 }
 
+func TestDetect_GoSourceWithoutGoMod(t *testing.T) {
+	dir := t.TempDir()
+	// A Go repo with no go.mod (single-file program or pre-module layout)
+	// must still be detected as Go.
+	writeFile(t, dir, "main.go", "package main\n\nfunc main() {}\n")
+
+	p, err := newDetector().Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if p.Language != "go" {
+		t.Errorf("Language: want %q, got %q", "go", p.Language)
+	}
+	if p.Version != "1.21" {
+		t.Errorf("Version default: want %q, got %q", "1.21", p.Version)
+	}
+	if p.PackageManager != "go mod" {
+		t.Errorf("PackageManager: want %q, got %q", "go mod", p.PackageManager)
+	}
+}
+
+func TestDetect_GoSourceInSubdir(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "cmd/foo/main.go", "package main\n")
+
+	p, err := newDetector().Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if p.Language != "go" {
+		t.Errorf("Language: want %q, got %q", "go", p.Language)
+	}
+}
+
+func TestDetect_GoSourceSkipsVendorAndGit(t *testing.T) {
+	dir := t.TempDir()
+	// .go files under .git and vendor must not cause a false Go detection.
+	writeFile(t, dir, ".git/hooks/foo.go", "package main\n")
+	writeFile(t, dir, "vendor/lib/x.go", "package lib\n")
+
+	p, err := newDetector().Detect(dir)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if p.Language == "go" {
+		t.Errorf("Language: did not expect go detection from vendor/.git files, got %q", p.Language)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Rust
 // ---------------------------------------------------------------------------
