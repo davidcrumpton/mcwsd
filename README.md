@@ -6,21 +6,6 @@
 
 See the [OpenWebUI Examples](./examples/OpenWebUI.md) directory for usage instructions or the [MCP Examples](./examples/MCP.md) directory for MCP-specific usage, or [combined tool usage](./examples/MCWSD-AND-FORGE-TOOL.md) for a combined tool usage.  You must create your own code for a [headless client](./examples/HEADLESS.md) which can run without AI, just program logic.
 
-## Searching GitHub for Ideas?
-
-For those of you who look at projects on GitHub for ideas, I'll tell you some things that can be done differently so you can get started right.
-
-1. **Complexity**:  The multiple forge idea seemed great but if I did it again, I'd support Docker, Kubernetes, and one virtual machine solution.  This project is complex to test and maintain. It now also supports ~~Solaris~~ Illumos Zones.
-2. **Security**:  It could have been built to use non privileged accounts for the Jails/VMs.  FreeBSD's jexec accepts a `-u` option, OpenBSD is already non priveleged since it logs in as a non-privileged user thus doas could have a list of approved commands to call.  The OCI containers are harder due to so many just running as root, but still not impossible to do.
-3. **Audit Security**:  It could have been built with better audit trails and logging to track all actions taken by the AI but that would exclude bad things in code it could execute in the container giving the admin a false sense of security.
-4. **MCP Server**:  I should have built it into the main daemon instead of making an API which woud have elimiated `mcwsd.py` but there are reasons why direct tool use from AI clients is preferred.  I also wouldn't have to support the `mcphe` plugin for `mcwsd`.  The MCP protocol allows compatibily with all supported AI systems.
-5. **Rust fans**:  Of course this could have been written in Rust instead of Go!!!
-6. **Versatility**:  This solution supports one forge and runtime at a time.  I could see a competitive workspace daemon that supports multiple runtimes and deployment options selecting what you ask for each workspace.  This would be a great feature for a competitive product but I wanted to keep it simple and focused on one forge and runtime at a time.  I have other forge accounts but really use one main one.
-7. **DinD**:  The daemon could have been built to support Docker-in-Docker (DinD) for containerized development environments.
-8. **Jails**:  I didn't use FreeBSD's shared base jail feature but I did use OpenBSD's base drive feature. FreeBSD supports administrator-built archive templates with optional OpenPGP signature verification; see [FREEBSD-SETUP.md](FREEBSD-SETUP.md).
-9. **Forgeless Mode**:  Forgless mode is confusing because you can pull public repos but you can't push them back to the forge.  This is a problem for AI because it always thinks it can forge later.  I should have made this more clear in the documentation and perhaps even disabled forging in forgeless mode.  A cool solution would be to forge in a subdirectory of the workspace instead of the whole workspace but that would have been more complex to implement.  I wanted to keep it simple for now.
-10. **Do Nothing**:  Truth be told, you can use your AI connected to your forge account and make all the edits and changes you wish, check it in, and have your CI/CD runner test the code.  If it fails, your AI can review the CI/CD pipeline and make corrections.
-
 ## Requirements
 
 - Go 1.25 or later
