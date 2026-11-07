@@ -488,8 +488,9 @@ func (p *ZonesProvisioner) destroyZoneDatasets(ctx context.Context, zoneName str
 	if _, err := p.runPrivileged(ctx, "umount", root); err != nil {
 		debugf("umount %s reported: %v", root, err)
 	}
-	if _, err := p.runPrivileged(ctx, "zfs", "destroy", "-r", p.zonePath(zoneName)); err != nil {
-		debugf("zfs destroy %s reported: %v", p.zonePath(zoneName), err)
+	dataset := strings.TrimPrefix(p.zonePath(zoneName), "/")
+	if _, err := p.runPrivileged(ctx, "zfs", "destroy", "-r", dataset); err != nil {
+		debugf("zfs destroy %s reported: %v", dataset, err)
 	}
 	if p.opts.BaseZone != "" {
 		p.destroyCloneSnapshot(ctx, zoneName)
@@ -499,7 +500,7 @@ func (p *ZonesProvisioner) destroyZoneDatasets(ctx context.Context, zoneName str
 // destroyCloneSnapshot destroys the "<zone>_snap" snapshot that zoneadm clone
 // created on the golden zone's active boot environment.
 func (p *ZonesProvisioner) destroyCloneSnapshot(ctx context.Context, zoneName string) {
-	golden := p.zonePath(p.opts.BaseZone)
+	golden := strings.TrimPrefix(p.zonePath(p.opts.BaseZone), "/")
 	out, err := p.runPrivileged(ctx, "zfs", "list", "-H", "-t", "snapshot", "-o", "name", "-r", golden)
 	if err != nil {
 		debugf("listing golden zone snapshots failed: %v", err)
