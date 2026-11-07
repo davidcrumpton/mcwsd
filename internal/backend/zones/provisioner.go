@@ -464,12 +464,51 @@ func (p *ZonesProvisioner) DestroyByID(ctx context.Context, zoneName string) err
 		return fmt.Errorf("failed to delete zone configuration %s: %w", zoneName, err)
 	}
 
+	// zoneadm uninstall (via the ipkg brand script) leaves a cloned zone's ZFS
+	// datasets and the golden zone's clone snapshot behind. Destroy them
+	// explicitly so repeated provision/destroy cycles do not accumulate.
+	p.destroyZoneDatasets(ctx, zoneName)
+
 	if p.opts.NetworkMode == "exclusive" {
 		if err := p.deleteVNIC(ctx, vnicNameForZone(zoneName)); err != nil {
 			debugf("failed to delete VNIC for zone %s: %v", zoneName, err)
 		}
 	}
 	return nil
+}
+
+// destroyZoneDatasets removes the zone's ZFS datasets and, when the zone was
+// cloned from a golden zone, the source snapshot zoneadm clone left on it.
+// It is best-effort: the zone may not have been installed or cloned yet.
+func (p *ZonesProvisioner) destroyZoneDatasets(ctx context.Context, zoneName string) {
+	if _, err := p.runPrivileged(ctx, "zfs", "destroy", "-r", p.zonePath(zoneName)); err != nil {
+		debugf("zfs destroy %s reported: %v", p.zonePath(zoneName), err)
+	}
+	if p.opts.BaseZone != "" {
+		p.destroyCloneSnapshot(ctx, zoneName)
+	}
+}
+
+// destroyCloneSnapshot destroys the "<zone>_snap" snapshot that zoneadm clone
+// created on the golden zone's active boot environment.
+func (p *ZonesProvisioner) destroyCloneSnapshot(ctx context.Context, zoneName string) {
+	golden := p.zonePath(p.opts.BaseZone)
+	out, err := p.runPrivileged(ctx, "zfs", "list", "-H", "-t", "snapshot", "-o", "name", "-r", golden)
+	if err != nil {
+		debugf("listing golden zone snapshots failed: %v", err)
+		return
+	}
+	prefix := zoneName + "_snap"
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		at := strings.LastIndex(line, "@")
+		if at < 0 || !strings.HasPrefix(line[at+1:], prefix) {
+			continue
+		}
+		if _, err := p.runPrivileged(ctx, "zfs", "destroy", line); err != nil {
+			debugf("zfs destroy %s reported: %v", line, err)
+		}
+	}
 }
 
 // DestroyWorkspaceByID destroys the zone whose native name is derived from its
@@ -868,6 +907,7 @@ func (p *ZonesProvisioner) cleanupFailedProvision(ctx context.Context, zoneName 
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "unmount")
 	_, _ = p.runPrivileged(ctx, "zoneadm", "-z", zoneName, "uninstall", "-F")
 	_, _ = p.runPrivileged(ctx, "zonecfg", "-z", zoneName, "delete", "-F")
+	p.destroyZoneDatasets(ctx, zoneName)
 	if p.opts.NetworkMode == "exclusive" {
 		_ = p.deleteVNIC(ctx, vnicNameForZone(zoneName))
 	}
