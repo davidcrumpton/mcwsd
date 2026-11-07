@@ -186,6 +186,12 @@ func (p *ZonesProvisioner) Validate(ctx context.Context) error {
 			return fmt.Errorf("privilege escalator %s is unavailable: %w", p.opts.Escalation, err)
 		}
 	}
+
+	if p.opts.Interface != "" {
+		if err := p.validateInterfaceExists(ctx, p.opts.Interface); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -595,6 +601,27 @@ func (p *ZonesProvisioner) getIPAM() (*ipam, error) {
 		p.ipam = alloc
 	}
 	return p.ipam, nil
+}
+
+// validateInterfaceExists verifies the configured data link is present in the
+// global zone so a wrong --zones-interface fails at startup with a clear
+// message instead of surfacing later inside an async provision job.
+func (p *ZonesProvisioner) validateInterfaceExists(ctx context.Context, iface string) error {
+	out, err := p.runPrivileged(ctx, "dladm", "show-link", "-p", "-o", "link")
+	if err != nil {
+		return fmt.Errorf("failed to list data links: %w", err)
+	}
+	links := make([]string, 0)
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			links = append(links, line)
+			if line == iface {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("zones interface %q does not exist; available data links: %s (find it with 'dladm show-phys')",
+		iface, strings.Join(links, ", "))
 }
 
 func (p *ZonesProvisioner) ensureVNIC(ctx context.Context, uplink, vnic string) error {

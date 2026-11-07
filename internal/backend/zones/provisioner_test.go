@@ -62,6 +62,8 @@ func (f *fakeRunner) run(ctx context.Context, name string, args ...string) ([]by
 		return []byte("192.168.1.10/24\n127.0.0.1/8\n"), nil
 	case serverName == "dladm" && len(serverArgs) > 0 && serverArgs[0] == "show-vnic":
 		return nil, nil
+	case serverName == "dladm" && len(serverArgs) > 0 && serverArgs[0] == "show-link":
+		return []byte("net0\n"), nil
 	}
 	return nil, nil
 }
@@ -428,6 +430,26 @@ func TestZonesProvisionerValidateMissingBrandScript(t *testing.T) {
 	err := p.Validate(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "installer") {
 		t.Fatalf("Validate error = %v, want missing installer error", err)
+	}
+}
+
+func TestZonesProvisionerValidateMissingInterface(t *testing.T) {
+	opts := testOptions(t)
+	opts.Interface = "e1000g0"
+	p, fr := testProvisioner(t, opts)
+	brand := filepath.Join(p.brandDir, "ipkg")
+	if err := os.MkdirAll(brand, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brand, "pkgcreatezone"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	err := p.Validate(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `interface "e1000g0" does not exist`) {
+		t.Fatalf("Validate error = %v, want missing interface error", err)
+	}
+	if !fr.called("dladm", "show-link", "-p", "-o", "link") {
+		t.Error("Validate did not check that the interface exists")
 	}
 }
 
