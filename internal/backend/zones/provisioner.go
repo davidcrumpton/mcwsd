@@ -953,14 +953,56 @@ func validateRouter(router string) error {
 }
 
 // vnicNameForZone derives a stable, short VNIC name from the zone name.
-// illumos data-link names are limited to 31 characters.
+//
+// illumos data-link names are limited to 31 characters and, per
+// dladm_valid_linkname(3DADM), must consist of alphanumerics, '_' and '.',
+// must not start with a digit, and must end in a number that has no leading
+// zero. Workspace IDs are hex strings, so they may end in a letter (which
+// dladm rejects). A trailing digit is appended when needed so the derived
+// name is always accepted by dladm.
 func vnicNameForZone(zoneName string) string {
 	base := strings.ReplaceAll(zoneName, "-", "")
-	if len(base) <= 20 {
-		return base
+	if len(base) > 20 {
+		sum := sha256.Sum256([]byte(zoneName))
+		base = fmt.Sprintf("z%x", sum[:8])
 	}
-	sum := sha256.Sum256([]byte(zoneName))
-	return fmt.Sprintf("z%x", sum[:8])
+	if !validDladmLinkName(base) {
+		base = strings.TrimRightFunc(base, func(r rune) bool {
+			return r >= '0' && r <= '9'
+		}) + "0"
+	}
+	return base
+}
+
+// validDladmLinkName reports whether name satisfies the constraints enforced
+// by dladm_valid_linkname(3DADM): under 32 characters, not starting with a
+// digit, using only alphanumerics plus '_' and '.', and ending in a number
+// without a leading zero.
+func validDladmLinkName(name string) bool {
+	if name == "" || len(name) >= 32 {
+		return false
+	}
+	if name[0] >= '0' && name[0] <= '9' {
+		return false
+	}
+	if c := name[len(name)-1]; c < '0' || c > '9' {
+		return false
+	}
+	i := len(name) - 1
+	for i >= 0 && name[i] >= '0' && name[i] <= '9' {
+		i--
+	}
+	if len(name)-1-i > 1 && name[i+1] == '0' {
+		return false
+	}
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func isBenignZoneError(err error) bool {

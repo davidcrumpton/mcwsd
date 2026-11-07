@@ -463,9 +463,11 @@ func TestBuildZoneConfigQuotesValues(t *testing.T) {
 }
 
 func TestVnicNameForZone(t *testing.T) {
-	short := vnicNameForZone("wsd-ws-71670485b")
-	if short != "wsdws71670485b" {
-		t.Errorf("short vnic = %q", short)
+	if got := vnicNameForZone("wsd-ws-71670485b"); got != "wsdws71670485b0" {
+		t.Errorf("vnic name ending in a letter = %q", got)
+	}
+	if got := vnicNameForZone("wsd-ws-716704856"); got != "wsdws716704856" {
+		t.Errorf("vnic name ending in a digit = %q", got)
 	}
 	long := vnicNameForZone("wsd-" + strings.Repeat("a", 40))
 	if len(long) > 31 {
@@ -473,6 +475,17 @@ func TestVnicNameForZone(t *testing.T) {
 	}
 	if long != vnicNameForZone("wsd-"+strings.Repeat("a", 40)) {
 		t.Error("vnic name is not stable")
+	}
+	for _, zone := range []string{
+		"wsd-ws-bacfd927d",
+		"wsd-ws-e7fee6e06",
+		"wsd-ws-000000000",
+		"wsd-ws-abc00",
+		"wsd-" + strings.Repeat("a", 40),
+	} {
+		if got := vnicNameForZone(zone); !validDladmLinkName(got) {
+			t.Errorf("vnic name %q for %q is not a valid dladm link name", got, zone)
+		}
 	}
 }
 

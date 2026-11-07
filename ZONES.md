@@ -332,7 +332,7 @@ mcwsd daemon --runtime zones \
 Host-side setup per zone:
 
 ```sh
-dladm create-vnic -l e1000g0 wsd-ws-71670485b0
+dladm create-vnic -l e1000g0 wsdws71670485b0
 ```
 
 Zone configuration:
@@ -856,8 +856,10 @@ dladm show-vnic
 dladm create-vnic -l <uplink> <unique-name>
 ```
 
-VNIC names are limited by the data-link name length. `mcwsd` derives a short,
-stable name from the workspace ID; do not reuse one.
+VNIC names are limited by the data-link name length and must not contain
+hyphens, must not start with a digit, and must end in a number. `mcwsd`
+derives a short, stable name from the workspace ID that satisfies these rules;
+do not reuse one.
 
 ---
 
