@@ -139,8 +139,11 @@ type FreeBSDJailProvisioner struct {
 	// dnsServers is a list of DNS server IP addresses to use in jails.
 	// These are written to /etc/resolv.conf in the jail root.
 	dnsServers []string
-	// ipam is the IP Address Manager for automatic IP allocation.
-	ipam *IPAM
+	// ipam is the IP Address Manager for automatic IP allocation. It is
+	// created lazily on first use and guarded by ipamMu, because Provision
+	// runs concurrently for different workspaces.
+	ipamMu sync.Mutex
+	ipam   *IPAM
 
 	// run and download are the side-effecting operations used
 	// during provisioning. They are fields (rather than direct calls) so
@@ -221,6 +224,47 @@ func (p *FreeBSDJailProvisioner) WithIPAM(ipam *IPAM) *FreeBSDJailProvisioner {
 	return p
 }
 
+// getIPAM returns the provisioner's IP Address Manager, creating it lazily on
+// first use. Provision runs concurrently for different workspaces, so both the
+// creation and every subsequent read must happen under ipamMu.
+func (p *FreeBSDJailProvisioner) getIPAM() (*IPAM, error) {
+	p.ipamMu.Lock()
+	defer p.ipamMu.Unlock()
+	if p.ipam == nil {
+		alloc, err := NewIPAM(p.ip4BaseNetwork, p.ip4PoolSize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize IPAM: %w", err)
+		}
+		p.ipam = alloc
+	}
+	return p.ipam, nil
+}
+
+// releaseIPAM returns a jail's IP address to the pool after it is destroyed.
+// jailName is the native jail identifier ("wsd-<workspace-id>").
+func (p *FreeBSDJailProvisioner) releaseIPAM(jailName string) {
+	p.ipamMu.Lock()
+	defer p.ipamMu.Unlock()
+	if p.ipam == nil {
+		return
+	}
+	p.ipam.Release(strings.TrimPrefix(jailName, "wsd-"))
+}
+
+// reserveIP re-registers a recovered jail's IP address so future allocations
+// do not hand it out again. Failures are logged, not fatal: the recovered
+// workspace remains usable, only the collision guard is weakened.
+func (p *FreeBSDJailProvisioner) reserveIP(workspaceID, ip string) {
+	alloc, err := p.getIPAM()
+	if err != nil {
+		debugf("could not initialize IPAM while recovering workspace %s: %v", workspaceID, err)
+		return
+	}
+	if err := alloc.Reserve(workspaceID, ip); err != nil {
+		debugf("could not reserve recovered IP %s for workspace %s: %v", ip, workspaceID, err)
+	}
+}
+
 // NewFreeBSDJailProvisioner creates a new FreeBSDJailProvisioner with the given configuration.
 // If jailConfPath is empty, it defaults to "/etc/jail.conf.d".
 // If baseJailPath is empty, it defaults to "/usr/local/jails".
@@ -295,6 +339,7 @@ func (p *FreeBSDJailProvisioner) Provision(ctx context.Context, spec runtime.Pro
 	networkInterface := p.networkInterface
 	ip4Address := p.ip4Address
 	networkMode := p.networkMode
+	vnetGateway := p.vnetGateway
 
 	// Per-workspace values override the provisioner's configured defaults.
 	if spec.Interface != "" {
@@ -306,16 +351,12 @@ func (p *FreeBSDJailProvisioner) Provision(ctx context.Context, spec runtime.Pro
 
 	// Auto-assign IP from pool if IPAM is configured and no specific IP is provided
 	if ip4Address == "" && p.ip4BaseNetwork != "" && p.ip4PoolSize > 0 {
-		// Initialize IPAM if not already set
-		if p.ipam == nil {
-			var err error
-			p.ipam, err = NewIPAM(p.ip4BaseNetwork, p.ip4PoolSize)
-			if err != nil {
-				return nil, fmt.Errorf("failed to initialize IPAM: %w", err)
-			}
+		alloc, err := p.getIPAM()
+		if err != nil {
+			return nil, err
 		}
 		// Allocate IP for this workspace
-		assignedIP, err := p.ipam.Allocate(spec.WorkspaceID)
+		assignedIP, err := alloc.Allocate(spec.WorkspaceID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to allocate IP address: %w", err)
 		}
@@ -323,9 +364,9 @@ func (p *FreeBSDJailProvisioner) Provision(ctx context.Context, spec runtime.Pro
 		debugf("auto-assigned IP %s to workspace %s from pool %s", ip4Address, spec.WorkspaceID, p.ip4BaseNetwork)
 
 		// If no VNET gateway is configured, use the IPAM's gateway
-		if p.vnetGateway == "" && networkMode == "vnet" {
-			p.vnetGateway = p.ipam.GatewayIP().String()
-			debugf("auto-assigned gateway %s for workspace %s", p.vnetGateway, spec.WorkspaceID)
+		if vnetGateway == "" && networkMode == "vnet" {
+			vnetGateway = alloc.GatewayIP().String()
+			debugf("auto-assigned gateway %s for workspace %s", vnetGateway, spec.WorkspaceID)
 		}
 	}
 
@@ -345,13 +386,13 @@ func (p *FreeBSDJailProvisioner) Provision(ctx context.Context, spec runtime.Pro
 			if err := validateVNETIP4Address(ip4Address); err != nil {
 				return nil, err
 			}
-			if err := validateIP4Address(p.vnetGateway); err != nil {
+			if err := validateIP4Address(vnetGateway); err != nil {
 				return nil, fmt.Errorf("invalid freebsd VNET gateway: %w", err)
 			}
 			if len(p.dnsServers) == 0 {
 				return nil, errors.New("static freebsd VNET requires explicit DNS servers")
 			}
-		} else if p.vnetGateway != "" {
+		} else if vnetGateway != "" {
 			// If gateway is provided, we need an IP address too
 			return nil, errors.New("freebsd VNET gateway provided without an IPv4 address; provide a CIDR address or omit both for DHCP")
 		}
@@ -397,7 +438,7 @@ func (p *FreeBSDJailProvisioner) Provision(ctx context.Context, spec runtime.Pro
 	}
 
 	debugf("provisioning jail %s: release=%s networkMode=%s interface=%s ip4=%s gateway=%s image=%s jailRoot=%s workDir=%s cacheMount=%s workspaceBase=%s workspaceHostDir=%s",
-		jailName, release, networkMode, networkInterface, ip4Address, p.vnetGateway, spec.Image, jailRoot, spec.WorkDir, spec.CacheMountPath, spec.WorkspaceBasePath, workspaceHostDir)
+		jailName, release, networkMode, networkInterface, ip4Address, vnetGateway, spec.Image, jailRoot, spec.WorkDir, spec.CacheMountPath, spec.WorkspaceBasePath, workspaceHostDir)
 
 	// Obtain (or reuse) the release-specific base archive. This is a shared,
 	// cached artifact and is never deleted as part of workspace cleanup.
@@ -421,7 +462,7 @@ func (p *FreeBSDJailProvisioner) Provision(ctx context.Context, spec runtime.Pro
 	}
 
 	// Create jail configuration
-	if err := p.createJailConfig(jailName, jailRoot, networkMode, networkInterface, ip4Address, p.vnetGateway, spec.WorkDir, spec.CacheMountPath, workspaceHostDir); err != nil {
+	if err := p.createJailConfig(jailName, jailRoot, networkMode, networkInterface, ip4Address, vnetGateway, spec.WorkDir, spec.CacheMountPath, workspaceHostDir); err != nil {
 		p.cleanupFailedProvision(jailName, jailRoot, rootExisted)
 		return nil, fmt.Errorf("failed to create jail config: %w", err)
 	}
@@ -533,6 +574,9 @@ func (p *FreeBSDJailProvisioner) DestroyByID(ctx context.Context, jailName strin
 	p.unmountJailRoot(jailRoot)
 	_ = p.removeJailRoot(jailRoot)
 
+	// Return the jail's IP address to the pool now that it is gone.
+	p.releaseIPAM(jailName)
+
 	return nil
 }
 
@@ -540,13 +584,23 @@ func (p *FreeBSDJailProvisioner) DestroyByID(ctx context.Context, jailName strin
 // This implements the runtime.WorkspaceRecoverer interface for workspace recovery
 // after daemon restart.
 func (p *FreeBSDJailProvisioner) RecoverHandle(ctx context.Context, nativeID string, workDir string) (*runtime.RuntimeHandle, error) {
-	// Check if the jail exists by checking its configuration
+	// Check if the jail exists by reading its configuration. The file also
+	// records the jail's IP address, which we re-reserve so a recovered
+	// workspace cannot collide with a new allocation made after the in-memory
+	// IPAM state was lost on restart.
 	jailConfigPath := p.getJailConfigPath(nativeID)
-	if _, err := os.Stat(jailConfigPath); err != nil {
+	data, err := os.ReadFile(jailConfigPath)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("jail %s not found", nativeID)
 		}
-		return nil, fmt.Errorf("failed to check jail config %s: %w", nativeID, err)
+		return nil, fmt.Errorf("failed to read jail config %s: %w", nativeID, err)
+	}
+
+	if p.ip4BaseNetwork != "" && p.ip4PoolSize > 0 {
+		if ip := extractJailIPv4(string(data)); ip != "" {
+			p.reserveIP(strings.TrimPrefix(nativeID, "wsd-"), ip)
+		}
 	}
 
 	return &runtime.RuntimeHandle{
@@ -962,7 +1016,9 @@ func (p *FreeBSDJailProvisioner) removeJailRoot(jailRoot string) error {
 }
 
 var (
-	safeNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	safeNameRE       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	jailIP4AddrRE    = regexp.MustCompile(`ip4\.addr \+= "([^"]+)"`)
+	jailIfconfigIPRE = regexp.MustCompile(`/sbin/ifconfig \S+ (\S+) up`)
 )
 
 // validateRelease rejects releases that are empty or unsafe to embed in a
@@ -1007,6 +1063,27 @@ func validateVNETIP4Address(address string) error {
 		return fmt.Errorf("invalid freebsd VNET IPv4 address %q (want address/prefix)", address)
 	}
 	return nil
+}
+
+// extractJailIPv4 pulls a workspace's IPv4 address out of a generated jail
+// configuration. Shared-stack jails record it on the ip4.addr line; VNET jails
+// record it on the exec.start ifconfig line. The returned address never
+// carries a prefix length.
+func extractJailIPv4(config string) string {
+	if m := jailIP4AddrRE.FindStringSubmatch(config); len(m) == 2 {
+		return stripCIDR(m[1])
+	}
+	if m := jailIfconfigIPRE.FindStringSubmatch(config); len(m) == 2 {
+		return stripCIDR(m[1])
+	}
+	return ""
+}
+
+func stripCIDR(addr string) string {
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		return addr[:i]
+	}
+	return addr
 }
 
 // isJailNotFoundError checks if the error indicates a jail was not found.

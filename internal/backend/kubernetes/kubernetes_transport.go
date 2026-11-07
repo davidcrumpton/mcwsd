@@ -173,7 +173,7 @@ func (t *KubectlExecTransport) runKubectlCommand(ctx context.Context, stdin []by
 func buildNetworkPolicyManifest(name, podName, namespace string) string {
 	metadata := map[string]interface{}{
 		"name":   name,
-		"labels": map[string]string{"app": "mcwsd"},
+		"labels": map[string]string{"app": "wsd"},
 	}
 	if namespace != "" {
 		metadata["namespace"] = namespace
@@ -185,8 +185,8 @@ func buildNetworkPolicyManifest(name, podName, namespace string) string {
 		"spec": map[string]interface{}{
 			"podSelector": map[string]interface{}{
 				"matchLabels": map[string]string{
-					"app":                    "mcwsd",
-					"mcwsd.io/workspace-key": workspaceKey(podName),
+					"app":                  "wsd",
+					"wsd.io/workspace-key": workspaceKey(podName),
 				},
 			},
 			"policyTypes": []string{"Ingress", "Egress"},

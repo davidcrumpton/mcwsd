@@ -230,8 +230,8 @@ func buildPodManifest(name, image, workDir, namespace string) string {
 	manifest.Metadata.Name = name
 	manifest.Metadata.Namespace = namespace
 	manifest.Metadata.Labels = map[string]string{
-		"app":                   "mcwsd",
-		"mcwsd.io/workspace-key": workspaceKey(name),
+		"app":                  "wsd",
+		"wsd.io/workspace-key": workspaceKey(name),
 	}
 	manifest.Spec.RestartPolicy = "Never"
 	manifest.Spec.Containers = append(manifest.Spec.Containers, struct {

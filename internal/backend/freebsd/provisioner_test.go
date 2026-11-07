@@ -510,6 +510,97 @@ func TestDestroyByIDToleratesMissingJail(t *testing.T) {
 	}
 }
 
+// TestGetIPAMConcurrentSingleInstance verifies that the lazily-created IPAM is
+// only ever constructed once, even when Provision runs concurrently.
+func TestGetIPAMConcurrentSingleInstance(t *testing.T) {
+	p := NewFreeBSDJailProvisioner("", "", "", "", "").
+		WithIPBaseNetwork("192.168.1.200/24").
+		WithIPPoolSize(16)
+
+	const n = 32
+	results := make([]*IPAM, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ipam, err := p.getIPAM()
+			if err != nil {
+				t.Errorf("getIPAM: %v", err)
+				return
+			}
+			results[i] = ipam
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 1; i < n; i++ {
+		if results[i] != results[0] {
+			t.Fatalf("getIPAM returned multiple instances (%v vs %v)", results[0], results[i])
+		}
+	}
+}
+
+// TestReleaseIPAM verifies that destroying a jail returns its IP address to
+// the pool.
+func TestReleaseIPAM(t *testing.T) {
+	p := NewFreeBSDJailProvisioner("", "", "", "", "").
+		WithIPBaseNetwork("192.168.1.200/24").
+		WithIPPoolSize(8)
+
+	ipam, err := p.getIPAM()
+	if err != nil {
+		t.Fatalf("getIPAM: %v", err)
+	}
+	if _, err := ipam.Allocate("ws-123"); err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if !ipam.IsAllocated("ws-123") {
+		t.Fatal("workspace IP not allocated")
+	}
+
+	p.releaseIPAM("wsd-ws-123")
+	if ipam.IsAllocated("ws-123") {
+		t.Fatal("workspace IP not released")
+	}
+}
+
+// TestRecoverHandleReservesIP verifies that recovering a jail re-registers its
+// IP address so a subsequent allocation cannot collide with it.
+func TestRecoverHandleReservesIP(t *testing.T) {
+	dir := t.TempDir()
+	p := NewFreeBSDJailProvisioner(
+		filepath.Join(dir, "jail.conf.d"),
+		filepath.Join(dir, "jails"),
+		"", "", "",
+	).WithIPBaseNetwork("192.168.1.200/24").WithIPPoolSize(8)
+
+	jailName := "wsd-recovered"
+	config := "ip4.addr += \"192.168.1.201/24\";\n"
+	if err := writeFile(p.getJailConfigPath(jailName), config, 0644); err != nil {
+		t.Fatalf("write jail config: %v", err)
+	}
+
+	if _, err := p.RecoverHandle(context.Background(), jailName, "/workspace/repo"); err != nil {
+		t.Fatalf("RecoverHandle: %v", err)
+	}
+
+	ipam, err := p.getIPAM()
+	if err != nil {
+		t.Fatalf("getIPAM: %v", err)
+	}
+	if !ipam.IsAllocated("recovered") {
+		t.Fatal("recovered workspace IP was not reserved")
+	}
+	ip, err := ipam.Allocate("new-ws")
+	if err != nil {
+		t.Fatalf("Allocate: %v", err)
+	}
+	if ip == "192.168.1.201/24" {
+		t.Fatalf("new allocation collided with recovered workspace IP: %s", ip)
+	}
+}
+
 // TestDownloadFailureKeepsCacheClean verifies that a failed download does not
 // leave a partial archive and that a shared cached archive is not removed.
 func TestDownloadFailureKeepsCacheClean(t *testing.T) {

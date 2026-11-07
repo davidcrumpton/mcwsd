@@ -3,6 +3,7 @@ package freebsd
 import (
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -12,10 +13,10 @@ type IPAM struct {
 	mu            sync.Mutex
 	network       *net.IPNet
 	baseIP        net.IP
-	prefixLen     int  // prefix length from the CIDR (e.g., 24)
+	prefixLen     int // prefix length from the CIDR (e.g., 24)
 	poolSize      int
 	allocated     map[string]net.IP // workspace ID -> assigned IP
-	nextAvailable int                // index of next available IP in pool
+	nextAvailable int               // index of next available IP in pool
 }
 
 // NewIPAM creates a new IP Address Manager with the given base network and pool size.
@@ -83,6 +84,34 @@ func (ipam *IPAM) Release(workspaceID string) {
 		// is exhausted and we wrap around (not implemented here for simplicity).
 		// For a more sophisticated implementation, we could track freed IPs in a list.
 	}
+}
+
+// Reserve records an already-assigned IP for a workspace, for example when a
+// recovered workspace is re-registered after a daemon restart. It advances the
+// allocation cursor past the reserved IP so a subsequent Allocate never hands
+// the same address out again. Reservations are idempotent: reserving a
+// workspace that already has an IP is a no-op.
+func (ipam *IPAM) Reserve(workspaceID, ipStr string) error {
+	ipam.mu.Lock()
+	defer ipam.mu.Unlock()
+
+	if _, exists := ipam.allocated[workspaceID]; exists {
+		return nil
+	}
+
+	ipStr, _, _ = strings.Cut(ipStr, "/")
+	ip := net.ParseIP(ipStr)
+	if ip == nil || ip.To4() == nil {
+		return fmt.Errorf("invalid IPv4 address %q", ipStr)
+	}
+	ip = ip.To4()
+
+	ipam.allocated[workspaceID] = ip
+	offset := int(ipToInt(ip) - ipToInt(ipam.baseIP))
+	if offset >= ipam.nextAvailable {
+		ipam.nextAvailable = offset + 1
+	}
+	return nil
 }
 
 // IsAllocated checks if the given workspace ID has an IP allocated.
@@ -163,17 +192,17 @@ func (ipam *IPAM) CountAllocated() int {
 func (ipam *IPAM) GatewayIP() net.IP {
 	// For simplicity, we use .1 as the gateway
 	// A more sophisticated implementation could take the gateway as a parameter
-	
+
 	// Zero out the host portion of base IP
 	ip := make(net.IP, len(ipam.baseIP))
 	copy(ip, ipam.baseIP)
-	
+
 	// Apply network mask
 	mask := net.IP(ipam.network.Mask)
 	for i := 0; i < len(ip) && i < len(mask); i++ {
 		ip[i] = ip[i] & mask[i]
 	}
-	
+
 	// Set last octet to 1
 	if len(ip) == 4 {
 		ip[3] = 1

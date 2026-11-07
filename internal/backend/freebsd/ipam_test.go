@@ -96,7 +96,6 @@ func TestIPAMExhaustion(t *testing.T) {
 		}
 	}
 
-
 	// Next allocation should fail
 	_, err = ipam.Allocate("workspace-4")
 	if err == nil {
@@ -138,6 +137,43 @@ func TestIPAMRelease(t *testing.T) {
 	// Should get the next IP, not the released one
 	if ip2 != "192.168.1.201/24" {
 		t.Errorf("Allocate(workspace-2) = %q, want %q (next available)", ip2, "192.168.1.201/24")
+	}
+}
+
+func TestIPAMReserve(t *testing.T) {
+	ipam, err := NewIPAM("192.168.1.200/24", 5)
+	if err != nil {
+		t.Fatalf("NewIPAM() error = %v", err)
+	}
+
+	// Reserving an address in the middle of the pool skips it for later
+	// allocations.
+	if err := ipam.Reserve("recovered-1", "192.168.1.202/24"); err != nil {
+		t.Fatalf("Reserve() error = %v", err)
+	}
+	if got := ipam.GetAssignedIP("recovered-1"); got != "192.168.1.202/24" {
+		t.Errorf("GetAssignedIP(recovered-1) = %q, want %q", got, "192.168.1.202/24")
+	}
+
+	ip, err := ipam.Allocate("new-1")
+	if err != nil {
+		t.Fatalf("Allocate(new-1) error = %v", err)
+	}
+	if ip != "192.168.1.203/24" {
+		t.Errorf("Allocate(new-1) = %q, want %q (must not collide with reserved IP)", ip, "192.168.1.203/24")
+	}
+
+	// Re-reserving the same workspace is a no-op and does not move the cursor.
+	if err := ipam.Reserve("recovered-1", "192.168.1.202/24"); err != nil {
+		t.Fatalf("Reserve() second time error = %v", err)
+	}
+	if got := ipam.GetAssignedIP("recovered-1"); got != "192.168.1.202/24" {
+		t.Errorf("GetAssignedIP after re-reserve = %q, want %q", got, "192.168.1.202/24")
+	}
+
+	// Invalid addresses are rejected.
+	if err := ipam.Reserve("bad", "not-an-ip"); err == nil {
+		t.Error("Reserve() accepted an invalid address")
 	}
 }
 
