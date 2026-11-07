@@ -22,6 +22,7 @@ See the [OpenWebUI Examples](./examples/OpenWebUI.md) directory for usage instru
 - **Artifact Retrieval**: Easily retrieve changes from workspaces via unified `git diff` patches and untracked file lists.
 - **API-First Design**: A lightweight RESTful API designed specifically for consumption by LLM agents and automation tools.
 - **MCP Server**: A JavaScript Plugin (mcwsd.js) exists for the [MCP Host Engine](https://github.com/davidcrumpton/mcp-host-engine).  See the instructions for setup.
+- **Runtime plugins**: The runtime layer (podman, docker, and the rest) is moving to single-purpose TypeScript plugins loaded by the daemon (`--plugin`). See [PLUGINS.md](PLUGINS.md).
 
 ## Quick Starts
 

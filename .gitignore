@@ -1,0 +1,6 @@
+# Plugin build artifacts (TypeScript sources live in plugin-devel/plugins/)
+plugin-devel/node_modules/
+plugin-devel/dist/
+
+# Built binaries
+/mcwsd

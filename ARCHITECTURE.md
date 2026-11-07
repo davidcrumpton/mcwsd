@@ -184,3 +184,17 @@ ignore these fields.
 ## Known pre-existing quirks
 
 None known at this time.
+
+## Runtime plugins (`internal/script`, `plugins/`, `plugin-devel/`)
+
+The five subsystems above are being complemented by a scriptable runtime layer:
+a single goja-backed JavaScript plugin (authored in TypeScript) can supply both
+the `Provisioner` lifecycle and the `ExecTransport` for a runtime, behind the
+same `runtime.Provisioner` / `runtime.ExecTransport` interfaces. Core owns the
+generic file I/O (ReadFile/WriteFile/CopyDirIn) on top of the plugin's pure
+`execArgs` function, and owns IPAM, options, and the undo stack.
+
+One plugin backs one daemon instance (`mcwsd daemon --plugin <path>`); a plugin
+declares its options (surfaced as `--help` flags) and the host binaries it may
+run. See [PLUGINS.md](../PLUGINS.md) for the contract and the single-plugin
+policy.

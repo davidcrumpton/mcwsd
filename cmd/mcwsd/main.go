@@ -112,6 +112,7 @@ func newDaemonCmd() *cobra.Command {
 	// ---- provisioner flags ----
 	var (
 		runtimeFlag string
+		pluginFlag  string
 
 		// FreeBSD jail (runtime=jail|freebsd only)
 		freebsdRelease       string
@@ -216,6 +217,9 @@ Flags are grouped into three concerns:
   Backend      -- daemon lifecycle, networking, cache, capacity gating
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if scriptPluginErr != nil {
+				return scriptPluginErr
+			}
 			zonesOpts.DNSServers = splitCommaList(zonesDNSServers)
 			return runDaemon(
 				runtimeFlag,
@@ -255,6 +259,7 @@ Flags are grouped into three concerns:
 
 	// -- Provisioner --
 	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, jail (FreeBSD), vmd/openbsd (OpenBSD), or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
+	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript); overrides --runtime. One plugin per daemon instance — run separate instances for separate runtimes.")
 
 	// FreeBSD jail settings. release has a sensible default. The interface
 	// is only needed when a fixed IPv4 address is pinned; with no address
@@ -458,6 +463,13 @@ Flags are grouped into three concerns:
 		"Author/committer email recorded on commits created by commit_and_pr")
 	f.StringVar(&gitCommitName, "git-commit-name", "mcwsd-agent",
 		"Author/committer name recorded on commits created by commit_and_pr")
+
+	// If --plugin was supplied, load it now and register its declared options
+	// onto the daemon flagset before cobra parses, so the plugin's flags show
+	// up in `mcwsd daemon --help`.
+	if p := preScanPluginPath(os.Args); p != "" && invokedSubcommand(os.Args) == "daemon" {
+		loadScriptPlugin(p, f)
+	}
 
 	return cmd
 }
@@ -776,6 +788,7 @@ func newCleanupCmd() *cobra.Command {
 		stateFile    string
 		jobsFile     string
 		runtimeFlag  string
+		pluginFlag   string
 		doOrphans    bool
 		doPrune      bool
 		workspaceTTL time.Duration
@@ -796,6 +809,9 @@ func newCleanupCmd() *cobra.Command {
 
 Both flags may be combined. Neither requires forge configuration.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if scriptPluginErr != nil {
+				return scriptPluginErr
+			}
 			return runCleanup(stateFile, jobsFile, runtimeFlag, workspaceTTL, jobRetention, doOrphans, doPrune, zonesOpts)
 		},
 	}
@@ -809,6 +825,8 @@ Both flags may be combined. Neither requires forge configuration.`,
 		"Remove finished job records older than this")
 	f.StringVar(&runtimeFlag, "runtime", "docker",
 		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, jail, vmd/openbsd, or zones/openindiana")
+	f.StringVar(&pluginFlag, "plugin", "",
+		"Path to a single .js runtime plugin used when the state file was written (overrides --runtime)")
 	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
 		"Parent ZFS dataset for workspace zones (zones runtime only; needed for orphan resource cleanup)")
 	f.StringVar(&zonesOpts.NetworkMode, "zones-network-mode", "shared",
@@ -823,6 +841,10 @@ Both flags may be combined. Neither requires forge configuration.`,
 		"Remove workspaces not accessed within --ttl")
 	f.DurationVar(&workspaceTTL, "ttl", 24*time.Hour,
 		"TTL used with --prune")
+
+	if p := preScanPluginPath(os.Args); p != "" && invokedSubcommand(os.Args) == "cleanup" {
+		loadScriptPlugin(p, f)
+	}
 
 	return cmd
 }
@@ -1021,6 +1043,13 @@ func buildProvisioner(
 	zonesOpts zones.Options,
 	templateOptions freebsd.TemplateOptions,
 ) (runtime.Provisioner, error) {
+	if scriptPluginRuntime != nil {
+		if scriptPluginOptions == nil {
+			return nil, fmt.Errorf("runtime plugin loaded but its options were not bound")
+		}
+		internal.Log.Info("using_script_plugin", "plugin", scriptPluginRuntime.Name, "os", scriptPluginRuntime.OS, "isolation", scriptPluginRuntime.Isolation)
+		return scriptPluginRuntime.NewProvisioner(scriptPluginOptions), nil
+	}
 	switch runtimeFlag {
 	case "podman":
 		return podman.NewPodmanProvisioner(), nil

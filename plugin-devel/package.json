@@ -1,0 +1,20 @@
+{
+  "name": "mcwsd-plugin-devel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TypeScript development environment for mcwsd runtime plugins",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "build:watch": "node scripts/build.js --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "deploy": "node scripts/build.js --deploy"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
