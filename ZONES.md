@@ -200,9 +200,9 @@ recommended.
 - `zonecfg(1M)`, `zoneadm(1M)`, `zlogin(1)`, `dladm(1M)`, and `zfs(1M)` in
   the host `PATH`.
 - The parent of the zone path is a ZFS dataset (`zfs list` shows it).
-- Root, or an account that can use `pfexec` with the `Zone Management` profile.
-  For exclusive-IP zones, also grant `Network Management` so `dladm` can create
-  and delete VNICs.
+- Root, or an account that can use `pfexec` with the `Zone Management` and
+  `Zone Security` profiles. For exclusive-IP zones, also grant `Network
+  Management` so `dladm` can create and delete VNICs.
 - A completed golden zone (recommended), or a host whose `ipkg` brand scripts
   are present and a plan for unattended first boot.
 - For exclusive-IP zones: a dedicated data link, normally a VNIC created from a
@@ -767,17 +767,26 @@ exclusive-IP with a VNIC.
 
 ### `pfexec` does not escalate / `Permission denied`
 
-The daemon account needs an RBAC profile. On OpenIndiana the reliable choice is
-the built-in `Zone Management` profile:
+The daemon account needs RBAC profiles. `zoneadm` and `zlogin` come from the
+built-in `Zone Management` profile; `zonecfg` comes from `Zone Security` (which
+also carries the `solaris.zone.*` authorizations `zonecfg` checks for write
+access):
 
 ```sh
-usermod -P "Zone Management" mcwsd
+usermod -P "Zone Management,Zone Security" mcwsd
 ```
 
 For exclusive-IP zones, add `Network Management` as well:
 
 ```sh
-usermod -P "Zone Management,Network Management" mcwsd
+usermod -P "Zone Management,Zone Security,Network Management" mcwsd
+```
+
+`chroot` (used to prepare the zone-root mount point and resolver) is not in any
+standard profile. Grant it by appending one line to `/etc/security/exec_attr`:
+
+```sh
+echo 'Zone Management:solaris:cmd:::/usr/sbin/chroot:euid=0' >> /etc/security/exec_attr
 ```
 
 Log the account out and back in after changing profiles; `usermod` warns that
@@ -888,10 +897,15 @@ do not reuse one.
 2. Grant RBAC profiles and re-login:
 
    ```sh
-   usermod -P "Zone Management" mcwsd
+   usermod -P "Zone Management,Zone Security" mcwsd
    # Exclusive-IP only:
-   usermod -P "Zone Management,Network Management" mcwsd
+   usermod -P "Zone Management,Zone Security,Network Management" mcwsd
    ```
+
+   On OpenIndiana `zonecfg` is covered by `Zone Security` (not `Zone
+   Management`), so both profiles are required. `Zone Management` grants
+   `zoneadm`/`zlogin`, `Zone Security` grants `zonecfg` and the
+   `solaris.zone.*` authorizations.
 
 3. Create the zones dataset:
 
@@ -950,10 +964,13 @@ that command must be permitted to run at least:
 - `chroot` (mount-point and resolver setup confined to the zone root)
 - `zfs` (read-only dataset validation; may be run without escalation)
 
-With `pfexec`, the daemon user's RBAC profile must permit these commands as
-well. If `Zone Management` alone does not include `chroot`, add a profile that
-does, or use `sudo`/`doas` for the daemon's escalation. The escalation command
-must be non-interactive: `pfexec`/RBAC does not prompt, and `sudo` needs a
+With `pfexec`, the daemon user's RBAC profiles must permit these commands:
+`Zone Management` covers `zoneadm` and `zlogin`, `Zone Security` covers
+`zonecfg`, and `Network Management` covers `dladm`. `chroot` is not in a
+standard profile — add an `exec_attr` entry granting it `euid=0` (see
+[`pfexec` does not escalate](#pfexec-does-not-escalate--permission-denied)), or
+use `sudo`/`doas` for the daemon's escalation. The escalation command must be
+non-interactive: `pfexec`/RBAC does not prompt, and `sudo` needs a
 `NOPASSWD` rule for the daemon account.
 
 The daemon does not escalate Go filesystem syscalls; only spawned commands are
