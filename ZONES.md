@@ -782,11 +782,18 @@ For exclusive-IP zones, add `Network Management` as well:
 usermod -P "Zone Management,Zone Security,Network Management" mcwsd
 ```
 
-`chroot` (used to prepare the zone-root mount point and resolver) is not in any
-standard profile. Grant it by appending one line to `/etc/security/exec_attr`:
+`chroot`, `umount`, and `zfs destroy` are not in any standard profile, but the
+daemon needs all three (chroot prepares the zone root; umount and zfs destroy
+tear down a cloned zone's datasets on destroy). Grant them by appending to
+`/etc/security/exec_attr`:
 
 ```sh
-echo 'Zone Management:solaris:cmd:::/usr/sbin/chroot:euid=0' >> /etc/security/exec_attr
+cat >> /etc/security/exec_attr <<'EOF'
+Zone Management:solaris:cmd:::/usr/sbin/chroot:euid=0
+Zone Management:solaris:cmd:::/usr/sbin/umount:euid=0
+Zone Management:solaris:cmd:::/sbin/umount:privs=sys_mount
+Zone Management:solaris:cmd:::/sbin/zfs:euid=0
+EOF
 ```
 
 Log the account out and back in after changing profiles; `usermod` warns that
@@ -962,12 +969,14 @@ that command must be permitted to run at least:
 - `zlogin`
 - `dladm` (exclusive-IP only)
 - `chroot` (mount-point and resolver setup confined to the zone root)
+- `umount` and `zfs destroy` (teardown of a cloned zone's datasets)
 - `zfs` (read-only dataset validation; may be run without escalation)
 
 With `pfexec`, the daemon user's RBAC profiles must permit these commands:
 `Zone Management` covers `zoneadm` and `zlogin`, `Zone Security` covers
-`zonecfg`, and `Network Management` covers `dladm`. `chroot` is not in a
-standard profile — add an `exec_attr` entry granting it `euid=0` (see
+`zonecfg`, and `Network Management` covers `dladm`. `chroot`, `umount`, and
+`zfs destroy` are not in a standard profile — add `exec_attr` entries granting
+them `euid=0` (see
 [`pfexec` does not escalate](#pfexec-does-not-escalate--permission-denied)), or
 use `sudo`/`doas` for the daemon's escalation. The escalation command must be
 non-interactive: `pfexec`/RBAC does not prompt, and `sudo` needs a
