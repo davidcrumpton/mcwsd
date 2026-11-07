@@ -147,7 +147,7 @@ func TestZonesExecTransportWriteFile(t *testing.T) {
 
 	var sawContent bool
 	for _, c := range fake.calls {
-		if strings.Contains(strings.Join(c.args, " "), `cat > "$1"`) {
+		if strings.Contains(strings.Join(c.args, " "), "cat > /workspace/repo/file") {
 			if c.stdin != "a\nb\n" {
 				t.Errorf("stdin = %q, want a\\nb\\n", c.stdin)
 			}

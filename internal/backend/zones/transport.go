@@ -177,9 +177,11 @@ func (t *ZonesExecTransport) WriteFile(ctx context.Context, path string, content
 		return fmt.Errorf("failed to create parent directory for %s in zone: %w", path, err)
 	}
 
-	// The path is bound as $1 so it needs no shell quoting.
+	// The path is shell-quoted inline. zlogin does not preserve the extra
+	// "$0/$1" arguments the way a direct exec would, so binding the path as
+	// "$1" is unreliable here.
 	res, err := t.command(ctx, bytes.NewReader(content), "zlogin", t.zoneName,
-		"sh", "-c", `cat > "$1"`, "sh", path)
+		"sh", "-c", "cat > "+quoteArg(path))
 	if err != nil {
 		return fmt.Errorf("failed to write %s in zone: %w", path, err)
 	}
