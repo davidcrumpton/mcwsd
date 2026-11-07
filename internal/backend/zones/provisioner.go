@@ -329,6 +329,19 @@ func (p *ZonesProvisioner) Provision(ctx context.Context, spec runtime.Provision
 	// from the workspace ID, so it cannot collide with another live workspace.
 	p.deleteZoneConfig(ctx, zoneName)
 
+	removeNet, removeFS := false, false
+	if p.opts.BaseZone != "" {
+		var err error
+		removeNet, err = p.zoneHasResource(ctx, p.opts.BaseZone, "net")
+		if err != nil {
+			return nil, err
+		}
+		removeFS, err = p.zoneHasResource(ctx, p.opts.BaseZone, "fs")
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	config := buildZoneConfig(zoneConfig{
 		Name:             zoneName,
 		ZonePath:         zonePath,
@@ -341,6 +354,8 @@ func (p *ZonesProvisioner) Provision(ctx context.Context, spec runtime.Provision
 		WorkDir:          spec.WorkDir,
 		WorkspaceHostDir: workspaceHostDir,
 		CacheMountPath:   spec.CacheMountPath,
+		RemoveNet:        removeNet,
+		RemoveFS:         removeFS,
 	})
 	if err := p.applyZoneConfig(ctx, zoneName, config); err != nil {
 		p.cleanupFailedProvision(ctx, zoneName)
@@ -655,6 +670,17 @@ func (p *ZonesProvisioner) deleteZoneConfig(ctx context.Context, zoneName string
 	_, _ = p.runPrivileged(ctx, "zonecfg", "-z", zoneName, "delete", "-F")
 }
 
+// zoneHasResource reports whether a configured zone has at least one resource
+// of the given type (e.g. "net" or "fs"). zonecfg's "info <type>" prints the
+// resource section only when the type is present.
+func (p *ZonesProvisioner) zoneHasResource(ctx context.Context, zoneName, resType string) (bool, error) {
+	out, err := p.runPrivileged(ctx, "zonecfg", "-z", zoneName, "info", resType)
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect zone %s resources: %w", zoneName, err)
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
 func (p *ZonesProvisioner) applyZoneConfig(ctx context.Context, zoneName, script string) error {
 	debugf("writing zonecfg for %s:\n%s", zoneName, strings.TrimSpace(script))
 	f, err := os.CreateTemp("", "wsd-zonecfg-*")
@@ -833,6 +859,11 @@ type zoneConfig struct {
 	WorkDir          string
 	WorkspaceHostDir string
 	CacheMountPath   string
+	// RemoveNet and RemoveFS control whether the template's net/fs resources
+	// are stripped after "create -t". They are set from the golden zone's
+	// actual resources so a golden zone without one of them does not fail.
+	RemoveNet bool
+	RemoveFS  bool
 }
 
 func buildZoneConfig(c zoneConfig) string {
@@ -841,9 +872,14 @@ func buildZoneConfig(c zoneConfig) string {
 	if c.BaseZone != "" {
 		lines = append(lines, "create -t "+zonecfgValue(c.BaseZone))
 		// The template's network and file-system resources are replaced with
-		// the workspace-specific ones below.
-		lines = append(lines, "remove net")
-		lines = append(lines, "remove fs")
+		// the workspace-specific ones below. Only strip resources the golden
+		// zone actually has; "remove" on a missing resource is an error.
+		if c.RemoveNet {
+			lines = append(lines, "remove net")
+		}
+		if c.RemoveFS {
+			lines = append(lines, "remove fs")
+		}
 	} else {
 		lines = append(lines, "create")
 		lines = append(lines, "set brand="+zonecfgValue(c.Brand))

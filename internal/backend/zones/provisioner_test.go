@@ -48,6 +48,9 @@ func (f *fakeRunner) run(ctx context.Context, name string, args ...string) ([]by
 	case serverName == "zoneadm" && len(serverArgs) >= 2 && serverArgs[0] == "list" && serverArgs[1] == "-pc":
 		return []byte(fmt.Sprintf("0:global:running:/::ipkg:shared\n1:%s:running:/x:u:ipkg:shared\n", f.zoneName)), nil
 	case serverName == "zonecfg":
+		if i := indexOf(serverArgs, "info"); i >= 0 && i+1 < len(serverArgs) {
+			return []byte(serverArgs[i+1] + ":\n"), nil
+		}
 		if i := indexOf(serverArgs, "-f"); i >= 0 && i+1 < len(serverArgs) {
 			if data, err := os.ReadFile(serverArgs[i+1]); err == nil {
 				f.mu.Lock()
@@ -481,6 +484,32 @@ func TestBuildZoneConfigQuotesValues(t *testing.T) {
 	}
 	if !strings.Contains(script, `set special="/host/with space/repo"`) {
 		t.Errorf("special was not quoted:\n%s", script)
+	}
+}
+
+func TestBuildZoneConfigRemovesOnlyPresentResources(t *testing.T) {
+	withNetFS := buildZoneConfig(zoneConfig{
+		BaseZone:    "wsd-golden",
+		ZonePath:    "/rpool1/zones/wsd-ws-test",
+		NetworkMode: "exclusive",
+		Physical:    "wsdws-test0",
+		RemoveNet:   true,
+		RemoveFS:    true,
+	})
+	if !strings.Contains(withNetFS, "remove net") || !strings.Contains(withNetFS, "remove fs") {
+		t.Errorf("golden zone with net+fs should strip both:\n%s", withNetFS)
+	}
+
+	netOnly := buildZoneConfig(zoneConfig{
+		BaseZone:    "wsd-golden",
+		ZonePath:    "/rpool1/zones/wsd-ws-test",
+		NetworkMode: "exclusive",
+		Physical:    "wsdws-test0",
+		RemoveNet:   true,
+		RemoveFS:    false,
+	})
+	if !strings.Contains(netOnly, "remove net") || strings.Contains(netOnly, "remove fs") {
+		t.Errorf("golden zone with only net should strip net but not fs:\n%s", netOnly)
 	}
 }
 
