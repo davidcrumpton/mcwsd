@@ -81,7 +81,11 @@ func (t *ZonesExecTransport) Exec(ctx context.Context, cmd []string, workDir str
 	payload := buildZloginPayload(cmd, workDir, env)
 	internal.Log.Debug("transport_exec_start", "transport", "zones", "zone", t.zoneName,
 		"command", fmt.Sprintf("%q", cmd), "work_dir", workDir, "env_count", len(env))
-	res, err := t.command(ctx, nil, "zlogin", t.zoneName, "sh", "-c", payload)
+	// zlogin (through su -c) re-parses the command arguments as a single shell
+	// line, which mangles metacharacters (;, &&, |, quotes) and drops the
+	// intended working-directory change. Stream the script to `sh -s` on stdin
+	// instead, which zlogin forwards verbatim.
+	res, err := t.command(ctx, strings.NewReader(payload+"\n"), "zlogin", t.zoneName, "sh", "-s")
 	if err != nil {
 		return nil, err
 	}

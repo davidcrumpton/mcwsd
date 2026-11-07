@@ -70,11 +70,11 @@ func TestZonesExecTransportExecUsesEscalation(t *testing.T) {
 	if call.name != "pfexec" {
 		t.Errorf("command = %q, want pfexec", call.name)
 	}
-	if len(call.args) < 5 || call.args[0] != "zlogin" || call.args[1] != "wsd-ws-test" || call.args[2] != "sh" || call.args[3] != "-c" {
+	if len(call.args) < 4 || call.args[0] != "zlogin" || call.args[1] != "wsd-ws-test" || call.args[2] != "sh" || call.args[3] != "-s" {
 		t.Fatalf("unexpected args: %v", call.args)
 	}
-	if payload := call.args[4]; !strings.Contains(payload, "git status") || !strings.Contains(payload, "FOO=bar") {
-		t.Errorf("unexpected payload: %s", payload)
+	if !strings.Contains(call.stdin, "git status") || !strings.Contains(call.stdin, "FOO=bar") || !strings.Contains(call.stdin, "cd /workspace/repo") {
+		t.Errorf("unexpected stdin payload: %q", call.stdin)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestZonesExecTransportBootstrap(t *testing.T) {
 	if len(fake.calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(fake.calls))
 	}
-	payload := fake.calls[0].args[len(fake.calls[0].args)-1]
+	payload := fake.calls[0].stdin
 	for _, want := range []string{"pkg install git", "safe.directory"} {
 		if !strings.Contains(payload, want) {
 			t.Errorf("bootstrap payload missing %q: %s", want, payload)
