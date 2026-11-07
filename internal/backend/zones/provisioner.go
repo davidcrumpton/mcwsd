@@ -481,6 +481,13 @@ func (p *ZonesProvisioner) DestroyByID(ctx context.Context, zoneName string) err
 // cloned from a golden zone, the source snapshot zoneadm clone left on it.
 // It is best-effort: the zone may not have been installed or cloned yet.
 func (p *ZonesProvisioner) destroyZoneDatasets(ctx context.Context, zoneName string) {
+	// The zone root is a "legacy" ZFS mount that zoneadm uninstall leaves
+	// mounted (zfs unmount refuses legacy mounts). Unmount it first so zfs
+	// destroy can remove the datasets.
+	root := filepath.Join(p.zonePath(zoneName), "root")
+	if _, err := p.runPrivileged(ctx, "umount", root); err != nil {
+		debugf("umount %s reported: %v", root, err)
+	}
 	if _, err := p.runPrivileged(ctx, "zfs", "destroy", "-r", p.zonePath(zoneName)); err != nil {
 		debugf("zfs destroy %s reported: %v", p.zonePath(zoneName), err)
 	}
