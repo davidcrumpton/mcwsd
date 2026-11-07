@@ -147,7 +147,7 @@ func TestZonesExecTransportWriteFile(t *testing.T) {
 
 	var sawContent bool
 	for _, c := range fake.calls {
-		if strings.Contains(strings.Join(c.args, " "), "cat > /workspace/repo/file") {
+		if strings.Contains(strings.Join(c.args, " "), "tee /workspace/repo/file") {
 			if c.stdin != "a\nb\n" {
 				t.Errorf("stdin = %q, want a\\nb\\n", c.stdin)
 			}
@@ -155,7 +155,7 @@ func TestZonesExecTransportWriteFile(t *testing.T) {
 		}
 	}
 	if !sawContent {
-		t.Error("WriteFile did not stream content to cat")
+		t.Error("WriteFile did not stream content to tee")
 	}
 }
 

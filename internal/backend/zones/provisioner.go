@@ -798,7 +798,9 @@ func (p *ZonesProvisioner) configureExclusiveNetwork(ctx context.Context, zoneNa
 	deadline := time.Now().Add(p.opts.BootTimeout)
 	var lastErr error
 	for {
-		if _, err := p.runPrivileged(ctx, "zlogin", zoneName, "sh", "-c", script); err == nil {
+		// zlogin re-parses command arguments through su -c, so the script must
+		// be shell-quoted as a single argument to survive intact.
+		if _, err := p.runPrivileged(ctx, "zlogin", zoneName, "sh", "-c", quoteArg(script)); err == nil {
 			return nil
 		} else {
 			lastErr = err
