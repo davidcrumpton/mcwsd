@@ -31,7 +31,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.350"
+	Version         = "0.4.355"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -467,16 +467,22 @@ func runDaemon(
 	if err := capacityCfg.Validate(); err != nil {
 		return fmt.Errorf("invalid capacity config: %w", err)
 	}
-	if capacityCfg.Enabled() {
-		internal.Log.Info("capacity_gating_enabled",
-			"memory_percent", capacityCfg.MemoryPercent,
-			"swap_percent", capacityCfg.SwapPercent,
-			"cpu_percent", capacityCfg.CPUPercent,
-			"filesystems", len(capacityCfg.Filesystems))
-	}
-	if capacityMaxWorkspaces > 0 {
-		internal.Log.Info("max_workspaces_configured", "limit", capacityMaxWorkspaces)
-	}
+	internal.Log.Info("capacity_configured",
+		"memory_percent", capacityCfg.MemoryPercent,
+		"swap_percent", capacityCfg.SwapPercent,
+		"cpu_percent", capacityCfg.CPUPercent,
+		"filesystems", capacityFilesystems,
+		"max_workspaces", capacityMaxWorkspaces)
+
+	// Log the resolved paths once at startup so an operator can see at a
+	// glance where state, jobs, cache, workspaces, and hints live. All of
+	// these were fully resolved before runDaemon was entered.
+	internal.Log.Info("paths_configured",
+		"workspace_base_path", workspaceBasePath,
+		"cache_dir", cacheDir,
+		"state_file", stateFile,
+		"jobs_file", jobsFile,
+		"provisioning_hints_file", provisioningHintsFile)
 
 	// Create provisioner
 	provisioner, err := buildProvisioner()
