@@ -143,6 +143,81 @@ func TestDeployedOpenBSDVMDPlugin(t *testing.T) {
 	}
 }
 
+func TestDeployedNetBSDAccountPlugin(t *testing.T) {
+	r := deployedPlugin(t, "netbsd-account")
+	if r.Name != "netbsd-account" || r.OS != "netbsd" || r.Isolation != "process" {
+		t.Fatalf("metadata = %q/%q/%q", r.Name, r.OS, r.Isolation)
+	}
+	for _, b := range []string{"sudo", "doas", "useradd", "userdel", "groupadd", "groupdel", "userinfo"} {
+		if !r.binaries[b] {
+			t.Fatalf("%s binary not allowed: %v", b, r.binaries)
+		}
+	}
+
+	byFlag := make(map[string]Option, len(r.Options))
+	for _, o := range r.Options {
+		byFlag[o.Flag] = o
+	}
+	if byFlag["escalation-command"].Type != "string" || byFlag["escalation-command"].Default != "sudo" {
+		t.Fatalf("escalation-command option = %+v", byFlag["escalation-command"])
+	}
+	if byFlag["account-home-base"].Type != "string" || byFlag["account-home-base"].Default != "/home" {
+		t.Fatalf("account-home-base option = %+v", byFlag["account-home-base"])
+	}
+	if byFlag["account-group"].Type != "string" || byFlag["account-group"].Default != "wsd" {
+		t.Fatalf("account-group option = %+v", byFlag["account-group"])
+	}
+
+	// The transport VM's host only exposes options; bind the escalator so the
+	// execArgs mapping resolves it.
+	if err := r.bindTransportOptions(map[string]interface{}{
+		"escalation-command": "sudo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const account = "ws-abc123456"
+	tr := r.newTransport(account, map[string]interface{}{
+		"native_id": account,
+		"username":  account,
+		"home":      "/home/" + account,
+	})
+
+	// A plain exec drops to the account and remaps /workspace onto home.
+	argv, _, err := tr.execArgs([]string{"echo", "hi"}, "/workspace/repo", []string{"A=1"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const netbsdPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/local/bin"
+	want := []string{"sudo", "-u", account, "sh", "-c",
+		"cd /home/" + account + "/repo && PATH=" + netbsdPath + " HOME=/home/" + account + " A=1 echo hi"}
+	if len(argv) != len(want) {
+		t.Fatalf("argv = %v, want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q", i, argv[i], want[i])
+		}
+	}
+
+	// A privileged file op (opts.root=true) still runs as the account and
+	// remaps the path argument; there is no sandbox root to escalate to.
+	argv, _, err = tr.execArgs([]string{"cat", "/workspace/repo/foo.txt"}, "", nil, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"sudo", "-u", account, "sh", "-c",
+		"PATH=" + netbsdPath + " HOME=/home/" + account + " cat /home/" + account + "/repo/foo.txt"}
+	if len(argv) != len(want) {
+		t.Fatalf("cat argv = %v, want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("cat argv[%d] = %q, want %q", i, argv[i], want[i])
+		}
+	}
+}
+
 func TestDeployedKubernetesPlugin(t *testing.T) {
 	r := deployedPlugin(t, "kubernetes")
 	if r.Name != "kubernetes" || r.OS != "linux" || r.Isolation != "container" {

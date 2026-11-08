@@ -970,7 +970,10 @@ func systemPackageCommands(os runtime.OS, baseImage string) (manager, install st
 		return "pkg", "pkg install"
 	case runtime.OSOpenBSD:
 		return "pkg_add", "pkg_add"
-	case runtime.OSNetBSD, runtime.OSMinix:
+	case runtime.OSNetBSD:
+		// pkg_add(1) is in NetBSD base; pkgin(1) is a pkgsrc add-on.
+		return "pkg_add", "pkg_add"
+	case runtime.OSMinix:
 		return "pkgin", "pkgin -y install"
 	case runtime.OSDarwin:
 		return "brew", "brew install"

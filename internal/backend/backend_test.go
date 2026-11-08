@@ -63,7 +63,7 @@ func TestSystemPackageCommands(t *testing.T) {
 		{name: "illumos zone", os: runtime.OSIllumos, wantManager: "pkg", wantInstall: "pkg install"},
 		{name: "openindiana zone", os: runtime.OSOpenIndiana, wantManager: "pkg", wantInstall: "pkg install"},
 		{name: "openbsd", os: runtime.OSOpenBSD, wantManager: "pkg_add", wantInstall: "pkg_add"},
-		{name: "netbsd", os: runtime.OSNetBSD, wantManager: "pkgin", wantInstall: "pkgin -y install"},
+		{name: "netbsd", os: runtime.OSNetBSD, wantManager: "pkg_add", wantInstall: "pkg_add"},
 		{name: "debian container", os: runtime.OSLinux, baseImage: "docker.io/library/golang:1.21", wantManager: "apt", wantInstall: "apt-get install -y"},
 		{name: "alpine container", os: runtime.OSLinux, baseImage: "docker.io/library/alpine:3.20", wantManager: "apk", wantInstall: "apk add"},
 		{name: "unknown os", os: runtime.OS("plan9"), wantManager: "", wantInstall: ""},

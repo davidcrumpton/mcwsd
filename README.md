@@ -51,6 +51,7 @@ Before running the daemon, ensure you have:
 > - FreeBSD jails: see [`FREEBSD-SETUP.md`](FREEBSD-SETUP.md)
 > - OpenBSD vmd VMs: see [`OPENBSD-VMD-SETUP.md`](OPENBSD-VMD-SETUP.md)
 > - OpenIndiana/illumos zones: see [`ZONES.md`](ZONES.md)
+> - NetBSD accounts: see [`NETBSD-SETUP.md`](NETBSD-SETUP.md)
 
 ### Running the Daemon
 
