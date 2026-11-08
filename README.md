@@ -23,6 +23,7 @@ See the [OpenWebUI Examples](./examples/OpenWebUI.md) directory for usage instru
 - **API-First Design**: A lightweight RESTful API designed specifically for consumption by LLM agents and automation tools.
 - **MCP Server**: A JavaScript Plugin (mcwsd.js) exists for the [MCP Host Engine](https://github.com/davidcrumpton/mcp-host-engine).  See the instructions for setup.
 - **Runtime plugins**: The runtime layer (podman, docker, and the rest) is moving to single-purpose TypeScript plugins loaded by the daemon (`--plugin`). See [PLUGINS.md](PLUGINS.md).
+- **Changeable Runtimes**: Runtimes can be switched.  You can run `mcwsd daemon --plugin kubernetes.js` to use Kubernetes as the runtime then terminate and run `mcwsd daemon --plugin podman.js` to switch to Podman.  Previously, the daemon would mix the state from one runtime with the state from another.  This version requires a clean runtime environment -- no workspaces should exist when upgrading to this new release.
 
 ## Quick Starts
 
