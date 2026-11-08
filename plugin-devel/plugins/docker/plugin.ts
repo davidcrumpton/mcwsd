@@ -81,6 +81,14 @@ const dockerPlugin: RuntimePlugin = {
     host.run(["docker", "rm", "-f", id]);
   },
 
+  recover(nativeID: string, workDir: string): Handle {
+    const res = host.run(["docker", "inspect", nativeID]);
+    if (res.exit_code !== 0) {
+      throw new Error("container " + nativeID + " not found: " + res.stderr);
+    }
+    return { native_id: nativeID, work_dir: workDir, username: "root", privilege: "root" };
+  },
+
   setNetwork(handle: Handle, enabled: boolean): void {
     const net = networkName();
     if (enabled) {

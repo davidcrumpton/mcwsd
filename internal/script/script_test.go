@@ -130,6 +130,21 @@ func TestBinaryGate(t *testing.T) {
 	}
 }
 
+// TestExecNoStdinDoesNotPanic guards against the typed-nil io.Reader bug: a
+// nil stdin []byte must become a nil interface, not a nil *bytes.Reader, or
+// os/exec's childStdin goroutine panics on the first stdin-less Exec.
+func TestExecNoStdinDoesNotPanic(t *testing.T) {
+	r := loadTestRuntime(t)
+	tr := r.newTransport("wsd-abc", map[string]interface{}{"native_id": "wsd-abc"})
+	res, err := tr.Exec(t.Context(), []string{"ls", "/"}, "/w", nil)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", res.ExitCode)
+	}
+}
+
 func TestOptionCollision(t *testing.T) {
 	fs := pflag.NewFlagSet("daemon", pflag.ContinueOnError)
 	fs.String("network", "", "")

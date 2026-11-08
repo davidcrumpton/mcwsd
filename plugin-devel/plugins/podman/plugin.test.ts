@@ -9,6 +9,7 @@ import * as pluginModule from "./plugin";
 const plugin = pluginModule as unknown as {
   name: string;
   binaries: string[];
+  recover: (id: string, workDir: string) => { native_id: string; work_dir: string };
   execArgs: (h: unknown, cmd: string[], wd: string, env: string[], o: { stdin: boolean; root: boolean }) => string[];
 };
 
@@ -41,5 +42,21 @@ describe("podman plugin", () => {
     const handle = { native_id: "abc123" };
     const argv = plugin.execArgs(handle, ["true"], "/w", ["A=B"], { stdin: false, root: true });
     expect(argv).toEqual(["podman", "exec", "--user", "0", "--workdir", "/w", "--env", "A=B", "abc123", "true"]);
+  });
+
+  it("recovers an existing container handle", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "", exit_code: 0 }),
+    });
+    const handle = plugin.recover("abc123", "/w");
+    expect(handle.native_id).toBe("abc123");
+    expect(handle.work_dir).toBe("/w");
+  });
+
+  it("throws when recovering a missing container", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "no such container", exit_code: 125 }),
+    });
+    expect(() => plugin.recover("gone", "/w")).toThrow(/not found/);
   });
 });

@@ -8,12 +8,14 @@ import type { CommandResult, Host } from "../types/mcwsd-runtime";
 
 export function buildMockHost(options: {
   options?: Record<string, unknown>;
-  run?: (argv: string[]) => CommandResult;
+  run?: (argv: string[], opts?: { stdin?: string; input?: string }) => CommandResult;
 } = {}): Host {
   const defaultRun = () => ({ stdout: "", stderr: "", exit_code: 0 });
 
   return {
-    run: options.run ? (argv: string[]) => options.run!(argv) : vi.fn(defaultRun),
+    run: options.run
+      ? (argv: string[], opts?: { stdin?: string; input?: string }) => options.run!(argv, opts)
+      : vi.fn(defaultRun),
     sleep: vi.fn(() => {}),
     log: vi.fn(() => {}),
     env: vi.fn((_key: string) => ""),

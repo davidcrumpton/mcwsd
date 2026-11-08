@@ -37,7 +37,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.3.512"
+	Version         = "0.4.000"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js

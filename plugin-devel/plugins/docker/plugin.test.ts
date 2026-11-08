@@ -10,6 +10,7 @@ const plugin = pluginModule as unknown as {
   name: string;
   binaries: string[];
   options: { flag: string }[];
+  recover: (id: string, workDir: string) => { native_id: string; work_dir: string };
   execArgs: (h: unknown, cmd: string[], wd: string, env: string[], o: { stdin: boolean; root: boolean }) => string[];
   setNetwork: (h: { native_id: string }, enabled: boolean) => void;
   bootstrapCmd: () => string[] | null;
@@ -58,5 +59,21 @@ describe("docker plugin", () => {
   it("returns the git safe.directory bootstrap", () => {
     installMockHost();
     expect(plugin.bootstrapCmd()).toEqual(["git", "config", "--system", "--add", "safe.directory", "*"]);
+  });
+
+  it("recovers an existing container handle", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "", exit_code: 0 }),
+    });
+    const handle = plugin.recover("abc", "/w");
+    expect(handle.native_id).toBe("abc");
+    expect(handle.work_dir).toBe("/w");
+  });
+
+  it("throws when recovering a missing container", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "No such container", exit_code: 1 }),
+    });
+    expect(() => plugin.recover("gone", "/w")).toThrow(/not found/);
   });
 });

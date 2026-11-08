@@ -57,6 +57,13 @@ const dockerPlugin = {
   destroyByID(id) {
     host.run(["docker", "rm", "-f", id]);
   },
+  recover(nativeID, workDir) {
+    const res = host.run(["docker", "inspect", nativeID]);
+    if (res.exit_code !== 0) {
+      throw new Error("container " + nativeID + " not found: " + res.stderr);
+    }
+    return { native_id: nativeID, work_dir: workDir, username: "root", privilege: "root" };
+  },
   setNetwork(handle, enabled) {
     const net = networkName();
     if (enabled) {

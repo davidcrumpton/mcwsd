@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +86,11 @@ func (t *ExecTransport) run(ctx context.Context, cmd []string, workDir string, e
 	if err != nil {
 		return hostResult{}, err
 	}
-	var in *bytes.Reader
+	// A nil []byte must map to a nil io.Reader, not a typed-nil *bytes.Reader:
+	// os/exec only skips attaching stdin when c.Stdin is a nil interface. A
+	// typed nil would let the childStdin goroutine call WriteTo on a nil
+	// *bytes.Reader and panic on the first stdin-less Exec.
+	var in io.Reader
 	if stdin != nil {
 		in = bytes.NewReader(stdin)
 	}

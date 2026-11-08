@@ -68,6 +68,14 @@ const podmanPlugin: RuntimePlugin = {
     host.run(["podman", "rm", "-f", id]);
   },
 
+  recover(nativeID: string, workDir: string): Handle {
+    const res = host.run(["podman", "inspect", nativeID]);
+    if (res.exit_code !== 0) {
+      throw new Error("container " + nativeID + " not found: " + res.stderr);
+    }
+    return { native_id: nativeID, work_dir: workDir, username: "root", privilege: "root" };
+  },
+
   execArgs(handle: Handle, cmd: string[], workDir: string, env: string[], opts: ExecArgsOptions): string[] {
     const args = ["podman", "exec"];
     if (opts.stdin) args.push("-i");

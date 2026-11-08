@@ -302,6 +302,11 @@ func handleFromJS(r *Runtime, val goja.Value) (*runtime.RuntimeHandle, map[strin
 	if handle.Username == "" {
 		handle.Username = "root"
 	}
+	// A plugin may override the reported guest OS per handle (e.g. the vmd
+	// plugin runs OpenBSD VMs but can host a freebsd or linux guest).
+	if osStr := strFromMap(m, "os"); osStr != "" {
+		handle.OS = runtime.OS(osStr)
+	}
 	switch strFromMap(m, "privilege") {
 	case "user":
 		handle.Privilege = runtime.PrivilegeUser

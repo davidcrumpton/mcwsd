@@ -7,8 +7,8 @@ Kubernetes, and anything else. It runs inside the daemon in a `goja` VM and is
 given a small, reviewable host API instead of raw access to the machine.
 
 The native Go backends in `internal/backend/*` are being ported to these
-plugins one at a time; `podman` and `docker` are already available as
-reference ports in `plugins/`.
+plugins one at a time; `podman`, `docker`, and `kubernetes` are already
+available as reference ports in `plugins/`.
 
 ## One plugin per daemon instance
 
@@ -182,8 +182,10 @@ plugin's vitest suite as each runtime is migrated.
 
 - `plugins/podman.js` — `plugins/podman/plugin.ts` (simplest CLI runtime, no options).
 - `plugins/docker.js` — `plugins/docker/plugin.ts` (demonstrates `options`, `setNetwork`, `bootstrapCmd`).
+- `plugins/kubernetes.js` — `plugins/kubernetes/plugin.ts` (demonstrates `init`, `recover`, a poll-based `provision`, and shell-quoted `execArgs` through `kubectl exec ... -- sh -c`).
+- `plugins/openbsd-vmd.js` — `plugins/openbsd-vmd/plugin.ts` (a VM runtime: SSH transport via `execArgs`, a three-stage readiness poll, host/guest escalation, and a per-handle `os` override).
 
-The remaining runtimes (FreeBSD jail, OpenBSD vmd, illumos zones, Kubernetes)
-are the natural next ports; their `build*Args` functions in
+The remaining runtimes (FreeBSD jail, illumos zones) are the
+natural next ports; their `build*Args` functions in
 `internal/backend/*/transport.go` map directly onto `execArgs`, and their
 provisioners onto `provision`/`destroy` plus `host.run`/`host.fetch`/`host.ipam`.

@@ -47,6 +47,13 @@ const podmanPlugin = {
   destroyByID(id) {
     host.run(["podman", "rm", "-f", id]);
   },
+  recover(nativeID, workDir) {
+    const res = host.run(["podman", "inspect", nativeID]);
+    if (res.exit_code !== 0) {
+      throw new Error("container " + nativeID + " not found: " + res.stderr);
+    }
+    return { native_id: nativeID, work_dir: workDir, username: "root", privilege: "root" };
+  },
   execArgs(handle, cmd, workDir, env, opts) {
     const args = ["podman", "exec"];
     if (opts.stdin) args.push("-i");
