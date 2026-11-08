@@ -2,8 +2,8 @@
 
 This document describes how to configure an OpenBSD host so that `mcwsd` can
 provision workspaces as full virtual machines under vmd(8)
-(`-runtime vmd`). It covers the golden image, the network model, privilege
-escalation, running the daemon, and troubleshooting.
+(`--plugin plugins/openbsd-vmd.js`). It covers the golden image, the network
+model, privilege escalation, running the daemon, and troubleshooting.
 
 If you want the design/implementation notes, see [VMD.md](VMD.md).
 
@@ -318,7 +318,7 @@ You may with to `su -m _wsd -c sh` to switch to the `_wsd` user before running t
 
 ```sh
 su -m _wsd -c 'mcwsd daemon \
-  --runtime vmd \
+  --plugin plugins/openbsd-vmd.js \
   --openbsd-vm-root /var/wsd/vms/openbsd \
   --openbsd-master-image /var/wsd/vms/openbsd/wsd-master.qcow2 \
   --openbsd-memory 1G \
@@ -336,7 +336,7 @@ su -m _wsd -c 'mcwsd daemon \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-runtime vmd` | `docker` | Selects the vmd(8) provisioner (`openbsd` is an alias) |
+| `--plugin` | *(required)* | Path to the vmd plugin, e.g. `plugins/openbsd-vmd.js` |
 | `-openbsd-vm-root` | `/var/wsd/vms/openbsd` | Base directory for VM disks |
 | `-openbsd-master-image` | `<vm-root>/disk-master.qcow2` | Golden image |
 | `-openbsd-memory` | `1G` | `vmctl -m` value per VM |
@@ -382,7 +382,7 @@ You must specify directory options if you don't use the default paths.
 
 
 ```sh
-doas -u _wsd -runtime vmd -cleanup-orphans
+doas -u _wsd mcwsd cleanup --plugin plugins/openbsd-vmd.js --orphans
 ```
 
 This removes tracked leftovers from a previous run **and** sweeps any
@@ -463,7 +463,7 @@ daemon="/usr/local/bin/wsd"
 daemon_user="_wsd"
 daemon_logger="daemon.info"
 daemon_flags="daemon \
-    --runtime vmd \
+    --plugin /usr/local/lib/mcwsd/plugins/openbsd-vmd.js \
     --openbsd-vm-root /var/wsd/vms/openbsd \
     --openbsd-master-image /var/wsd/vms/openbsd/wsd-master.qcow2 \
     --openbsd-memory 1G \

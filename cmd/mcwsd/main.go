@@ -19,22 +19,18 @@ import (
 	"github.com/davidcrumpton/mcwsd/internal"
 	"github.com/davidcrumpton/mcwsd/internal/api"
 	appbackend "github.com/davidcrumpton/mcwsd/internal/backend"
-	"github.com/davidcrumpton/mcwsd/internal/backend/docker"
-	"github.com/davidcrumpton/mcwsd/internal/backend/kubernetes"
-	"github.com/davidcrumpton/mcwsd/internal/backend/podman"
 	"github.com/davidcrumpton/mcwsd/internal/capacity"
 	"github.com/davidcrumpton/mcwsd/internal/gitpush"
 	"github.com/davidcrumpton/mcwsd/internal/jobs"
 	"github.com/davidcrumpton/mcwsd/internal/runtime"
 	"github.com/davidcrumpton/mcwsd/internal/script"
-	"github.com/docker/docker/client"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.000"
+	Version         = "0.4.100"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -124,8 +120,7 @@ func main() {
 func newDaemonCmd() *cobra.Command {
 	// ---- provisioner flags ----
 	var (
-		runtimeFlag string
-		pluginFlag  string
+		pluginFlag string
 	)
 
 	// ---- backend / daemon flags ----
@@ -196,7 +191,7 @@ serves the workspace API, and cleans up stale workspaces periodically.
 
 Flags are grouped into three concerns:
 
-	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes)
+	Provisioner  -- which runtime plugin backs workspaces (--plugin)
   Backend      -- daemon lifecycle, networking, cache, capacity gating
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -204,7 +199,6 @@ Flags are grouped into three concerns:
 				return scriptPluginErr
 			}
 			return runDaemon(
-				runtimeFlag,
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
 				tlsCertFile, tlsKeyFile,
@@ -233,8 +227,7 @@ Flags are grouped into three concerns:
 	f := cmd.Flags()
 
 	// -- Provisioner --
-	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, or kubernetes; Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
-	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript); overrides --runtime. One plugin per daemon instance — run separate instances for separate runtimes.")
+	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript). One plugin per daemon instance — run separate instances for separate runtimes.")
 
 	// -- Backend --
 	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", "/etc/wsd/provisioning_hints.json",
@@ -355,7 +348,6 @@ Flags are grouped into three concerns:
 }
 
 func runDaemon(
-	runtimeFlag string,
 	provisioningHintsFile, workspaceBasePath string,
 	bindAddress string, port int, cacheDir string, maxCacheGB int,
 	stateFile string, workspaceTTL, pruneInterval time.Duration, pruneOnStartup bool,
@@ -457,7 +449,7 @@ func runDaemon(
 	}
 
 	// Create provisioner
-	provisioner, err := buildProvisioner(runtimeFlag)
+	provisioner, err := buildProvisioner()
 	if err != nil {
 		return err
 	}
@@ -467,16 +459,17 @@ func runDaemon(
 	// escalation, ...) before the daemon starts accepting work. This turns a
 	// problem the agent would otherwise hit mid-provision into a startup
 	// error the operator sees immediately.
+	runtimeName := provisioner.Name()
 	if v, ok := provisioner.(runtime.Validator); ok {
 		if err := v.Validate(context.Background()); err != nil {
-			return fmt.Errorf("provisioner validation failed (runtime=%s): %w", runtimeFlag, err)
+			return fmt.Errorf("provisioner validation failed (runtime=%s): %w", runtimeName, err)
 		}
-		internal.Log.Info("provisioner_validated", "runtime", runtimeFlag)
+		internal.Log.Info("provisioner_validated", "runtime", runtimeName)
 	}
 	if err := provisioner.Init(context.Background()); err != nil {
-		return fmt.Errorf("provisioner initialization failed (runtime=%s): %w", runtimeFlag, err)
+		return fmt.Errorf("provisioner initialization failed (runtime=%s): %w", runtimeName, err)
 	}
-	internal.Log.Info("provisioner_initialized", "runtime", runtimeFlag)
+	internal.Log.Info("provisioner_initialized", "runtime", runtimeName)
 
 	// Load administrator-authored environment hints, if any. A missing file is
 	// not an error; a malformed one is, so a typo surfaces at startup.
@@ -643,7 +636,6 @@ func newCleanupCmd() *cobra.Command {
 	var (
 		stateFile    string
 		jobsFile     string
-		runtimeFlag  string
 		pluginFlag   string
 		doOrphans    bool
 		doPrune      bool
@@ -667,7 +659,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
-			return runCleanup(stateFile, jobsFile, runtimeFlag, workspaceTTL, jobRetention, doOrphans, doPrune)
+			return runCleanup(stateFile, jobsFile, workspaceTTL, jobRetention, doOrphans, doPrune)
 		},
 	}
 
@@ -678,10 +670,8 @@ Both flags may be combined. Neither requires forge configuration.`,
 		"Path to the background-job tracking file (empty disables job cleanup)")
 	f.DurationVar(&jobRetention, "job-retention", 24*time.Hour,
 		"Remove finished job records older than this")
-	f.StringVar(&runtimeFlag, "runtime", "docker",
-		"Workspace provisioner used when the state file was written: docker, podman, or kubernetes")
 	f.StringVar(&pluginFlag, "plugin", "",
-		"Path to a single .js runtime plugin used when the state file was written (overrides --runtime)")
+		"Path to a single .js runtime plugin used when the state file was written")
 	f.BoolVar(&doOrphans, "orphans", false,
 		"Force-remove workspaces left behind by a previous not-cleanly-shut-down daemon run")
 	f.BoolVar(&doPrune, "prune", false,
@@ -696,7 +686,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 	return cmd
 }
 
-func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool) error {
+func runCleanup(stateFile, jobsFile string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool) error {
 	if !doOrphans && !doPrune {
 		return fmt.Errorf("specify at least one of --orphans or --prune")
 	}
@@ -708,7 +698,7 @@ func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetent
 
 	// Cleanup only needs a minimal provisioner — enough to destroy containers/
 	// jails/VMs — and no forge config at all.
-	provisioner, err := buildProvisioner(runtimeFlag)
+	provisioner, err := buildProvisioner()
 	if err != nil {
 		return err
 	}
@@ -901,37 +891,18 @@ func loadScriptPlugin(path string, fs *pflag.FlagSet) {
 	scriptPluginOptions = vals
 }
 
-// buildProvisioner constructs the appropriate runtime.Provisioner from flags.
-// It is called by both the daemon and cleanup subcommands.
-func buildProvisioner(runtimeFlag string) (runtime.Provisioner, error) {
-	if scriptPluginRuntime != nil {
-		if scriptPluginOptions == nil {
-			return nil, fmt.Errorf("runtime plugin loaded but its options were not bound")
-		}
-		internal.Log.Info("using_script_plugin", "plugin", scriptPluginRuntime.Name, "os", scriptPluginRuntime.OS, "isolation", scriptPluginRuntime.Isolation)
-		return scriptPluginRuntime.NewProvisioner(scriptPluginOptions), nil
+// buildProvisioner constructs the runtime.Provisioner from the loaded script
+// plugin. Every runtime is now a plugin; a daemon (or cleanup) run must load
+// one via --plugin. It is called by both the daemon and cleanup subcommands.
+func buildProvisioner() (runtime.Provisioner, error) {
+	if scriptPluginRuntime == nil {
+		return nil, fmt.Errorf("no runtime plugin loaded: pass --plugin <path> to a compiled runtime plugin")
 	}
-	switch runtimeFlag {
-	case "podman":
-		return podman.NewPodmanProvisioner(), nil
-	case "kubernetes":
-		namespace := os.Getenv("MCWSD_KUBERNETES_NAMESPACE")
-		if namespace == "" {
-			namespace = "default"
-		}
-		return kubernetes.NewKubernetesProvisioner("", namespace), nil
-	default:
-		// Docker (default)
-		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-		if err != nil {
-			return nil, fmt.Errorf("failed to create docker client: %w", err)
-		}
-		networkName := os.Getenv("MCWSD_NETWORK_NAME")
-		if networkName == "" {
-			networkName = "bridge"
-		}
-		return docker.NewDockerProvisioner(cli, networkName), nil
+	if scriptPluginOptions == nil {
+		return nil, fmt.Errorf("runtime plugin loaded but its options were not bound")
 	}
+	internal.Log.Info("using_script_plugin", "plugin", scriptPluginRuntime.Name, "os", scriptPluginRuntime.OS, "isolation", scriptPluginRuntime.Isolation)
+	return scriptPluginRuntime.NewProvisioner(scriptPluginOptions), nil
 }
 
 // generateSessionID returns a short random hex ID unique to this daemon

@@ -40,7 +40,7 @@ export MCWSD_GIT_SSH_KNOWN_HOSTS=/etc/wsd/known_hosts
 exec /usr/local/bin/mcwsd daemon \
     --port 9080 \
     --bind-address=0.0.0.0 \
-    --runtime docker \
+    --plugin /usr/local/lib/mcwsd/plugins/docker.js \
     --workspace-base-path /home/wsd/workspaces \
     --cache-dir /var/lib/wsd/cache \
     --state-file /var/lib/wsd/state.json \

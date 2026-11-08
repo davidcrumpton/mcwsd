@@ -115,11 +115,12 @@ type ProvisionSpec struct {
 // Provisioner creates and destroys execution environments. It is
 // responsible only for lifecycle — it knows nothing about git, dependency
 // installation, or caching policy; that orchestration happens above this
-// interface (see internal/backend/docker.Backend for the Docker case).
+// interface (see internal/backend.Backend).
 //
 // Extension point: implement this interface for a new runtime (FreeBSD
 // jail, VM, ...) and it can be swapped in without changing the workspace
-// backend that calls it.
+// backend that calls it. Every runtime is supplied by a goja script plugin
+// (internal/script); the daemon loads exactly one per instance.
 type Provisioner interface {
 	// Name identifies this provisioner, e.g. "docker".
 	Name() string

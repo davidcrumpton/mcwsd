@@ -6,7 +6,7 @@ The following command will start the Workspace Daemon in Kubernetes mode, assumi
 
 ```sh
 # Will create all directories in home directory and the default namespace.  You must create the namespace first to use an alternate namespace.
-/usr/local/bin/mcwsd daemon --runtime kubernetes --bind-address=0.0.0.0 --port 9080 
+/usr/local/bin/mcwsd daemon --plugin plugins/kubernetes.js --bind-address=0.0.0.0 --port 9080 
 ```
 
 ## Podman Setup
@@ -14,7 +14,7 @@ The following command will start the Workspace Daemon in Kubernetes mode, assumi
 This command will start the Workspace Daemon in Podman mode creating directories as needed in home directory:
 
 ```sh
-/usr/local/bin/mcwsd daemon --runtime podman --port 9080 --bind-address=0.0.0.0 --debug
+/usr/local/bin/mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --debug
 ```
 
 ## Docker Setup
@@ -22,7 +22,7 @@ This command will start the Workspace Daemon in Podman mode creating directories
 This command will start the Workspace Daemon in Docker mode:
 
 ```sh
-/usr/local/bin/mcwsd daemon --runtime docker --port 9080 --bind-address=0.0.0.0 --debug
+/usr/local/bin/mcwsd daemon --plugin plugins/docker.js --port 9080 --bind-address=0.0.0.0 --debug
 ```
 
 Docker mode assume the user account is in the docker group.  None of the modes require any special permissions like doas/sudo.

@@ -428,7 +428,7 @@ func (s *Server) handleSafeEdit(w http.ResponseWriter, r *http.Request) {
 
 // CommitAndPRRequest is the body for POST /workspaces/{id}/commit-and-pr.
 // Note there is no branch field — the branch name is chosen server-side
-// (see docker.Backend.CommitAndPR) so a workspace can never target an
+// (see backend.Backend.CommitAndPR) so a workspace can never target an
 // existing branch or another workspace's branch. There is likewise no
 // forge field: the forge is a daemon-level setting.
 type CommitAndPRRequest struct {

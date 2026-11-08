@@ -29,7 +29,7 @@ The flags are evaluated at daemon startup. Secret values are intentionally read 
 
 ```sh
 mcwsd daemon \
-  --runtime jail \
+  --plugin plugins/freebsd-jail.js \
   --bind-address 0.0.0.0 \
   --port 8080 \
   --workspace-base-path /var/wsd/workspaces \
@@ -37,10 +37,10 @@ mcwsd daemon \
   --jobs-file /var/wsd/jobs.json
 ```
 
-A minimal server can also be started with defaults:
+A minimal server can also be started with defaults plus a plugin:
 
 ```sh
-mcwsd daemon
+mcwsd daemon --plugin plugins/docker.js
 ```
 
 ## Global and operational flags
@@ -69,17 +69,15 @@ These flags apply to the process at large.
 
 These options control which runtime backs new workspaces and how it is configured.
 
-### `--runtime`
+### `--plugin`
 
 - Type: string
-- Default: `default`
-- Supported values include:
-  - `docker`
-  - `podman`
-  - `kubernetes`
-  - `jail` (FreeBSD)
-  - `vmd` / `openbsd` (OpenBSD)
-- This selects the workspace provisioner used for new workspaces.
+- Default: empty (required)
+- Path to a compiled runtime plugin (e.g. `plugins/podman.js`, `plugins/docker.js`,
+  `plugins/kubernetes.js`, `plugins/freebsd-jail.js`, `plugins/openbsd-vmd.js`,
+  or `plugins/zones.js`).
+- Every runtime is a plugin; the daemon loads exactly one via `--plugin` and
+  registers the plugin's own options as `--help` flags.
 
 ### FreeBSD jail flags
 
@@ -557,7 +555,7 @@ export MCWSD_FORGEJO_API_BASE=https://forgejo.example.com/api/v1
 export MCWSD_FORGEJO_PROJECT_PATH=team/workspace
 
 mcwsd daemon \
-  --runtime jail \
+  --plugin plugins/freebsd-jail.js \
   --bind-address 0.0.0.0 \
   --port 8080 \
   --workspace-base-path /srv/wsd/workspaces \

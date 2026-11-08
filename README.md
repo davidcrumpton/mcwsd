@@ -30,7 +30,7 @@ Substitute podman for docker below if you use docker.  This will create the file
 You must note the generated token and have your API client configured to use it or use the export command `export MCWSD_TOKEN="wsd-<token>"` to set it before you run the daemon:
 
 ```bash
-mcwsd daemon --runtime podman  --port 9080 --bind-address=0.0.0.0 --debug
+mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --debug
 # We set the token in the environment variable to avoid having to pass it to the daemon, this is useful if you are running the bind address in case your agent is in docker and can't reach mcwsd via localhost.
 
 # Running the daemon locally allows you to enter the container and see what the AI is doing.  Nothing prohibits you from execing docker exec -it <container-id> to see what is happening inside the container.  The same is true for all other runtimes.
@@ -54,7 +54,7 @@ Before running the daemon, ensure you have:
 ### Running the Daemon
 
 ```bash
-go run cmd/mcwsd/main.go daemon --runtime podman --port 9080 --bind-address=0.0.0.0
+go run cmd/mcwsd/main.go daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0
 ```
 
 ### Compiling the Daemon

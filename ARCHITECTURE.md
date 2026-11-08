@@ -23,10 +23,10 @@ type Provisioner interface {
 }
 ```
 
-Implementations: `docker.DockerProvisioner` (Docker Engine API),
-`podman.PodmanProvisioner` (Podman CLI), `kubernetes.KubernetesProvisioner`
-(Kubernetes pods), plus goja-backed script plugins (`script.Provisioner`) for
-`podman`, `docker`, `kubernetes`, `openbsd-vmd`, `freebsd-jail`, and `zones`.
+Implementations: goja-backed script plugins (`script.Provisioner`) for `podman`,
+`docker`, `kubernetes`, `openbsd-vmd`, `freebsd-jail`, and `zones`. Every
+runtime is a plugin; `internal/backend/*` holds only the workspace orchestration
+layer (`backend.Backend`, `process`, `provision`), not per-runtime provisioners.
 
 Optional interfaces a Provisioner may implement:
 - `Validator` — host/runtime configuration validation
@@ -49,11 +49,9 @@ type ExecTransport interface {
 }
 ```
 
-Implementations: `docker.DockerExecTransport` (Docker Engine API),
-`podman.PodmanExecTransport` (Podman CLI),
-`kubernetes.KubectlExecTransport` (kubectl exec), and the script
-`ExecTransport` (ssh(1) for the openbsd-vmd plugin, jexec(8) for the
-freebsd-jail plugin, zlogin(1) for the zones plugin).
+Implementations: the script `ExecTransport`, which drives each plugin's
+`execArgs` (docker/podman/kubectl CLI, ssh(1) for openbsd-vmd, jexec(8) for
+freebsd-jail, zlogin(1) for zones).
 
 Optional interfaces an ExecTransport may implement:
 - `Bootstrapper` — one-time base setup inside a freshly provisioned runtime
@@ -168,18 +166,18 @@ ignore these fields.
 
 ## Rules for extending this
 
-* No provisioner/transport-specific logic outside that provisioner's own
-  package (e.g. no raw Docker API calls outside `DockerProvisioner` /
-  `DockerExecTransport`).
-* A new runtime = implement `Provisioner` + `ExecTransport` once. Nothing
-  above `internal/runtime` should need to change.
+* No provisioner/transport-specific logic outside the plugin that owns it
+  (e.g. no raw Docker CLI calls outside `plugins/docker/plugin.ts`).
+* A new runtime = author one plugin (`plugin-devel/plugins/<name>/plugin.ts`)
+  implementing `provision`/`destroy` + `execArgs`. Nothing above
+  `internal/runtime` should need to change.
 * A new forge = implement `Forge` once. Nothing in `internal/gitpush`
   should need to change beyond picking which `Forge` to construct.
 * `RuntimeHandle` fields are additive — add a field for a new runtime's
   needs rather than overloading an existing one's meaning.
 * Optional interfaces (Validator, OrphanCleaner, WorkspaceRecoverer,
-  WorkspaceIDDestroyer, Bootstrapper) allow provisioners and transports to
-  opt into additional capabilities without breaking the core contracts.
+  WorkspaceIDDestroyer, Bootstrapper) allow plugins to opt into additional
+  capabilities without breaking the core contracts.
 
 ## Known pre-existing quirks
 
