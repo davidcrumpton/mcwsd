@@ -173,10 +173,10 @@ a declared binary list.
 
 The platform-specific knowledge that was previously inline in each backend —
 `jail -m name=` form, `certctl rehash` before `pkg bootstrap`, the pkg DB
-ownership, the OpenBSD no-setsid supervisor, zlogin's `su -c` argument
-mangling — moves into the plugin but does not disappear. Keep the existing
-`*_test.go` golden tests as the trace of those quirks, and port them to the
-plugin's vitest suite as each runtime is migrated.
+ownership, the OpenBSD three-stage SSH readiness poll, zlogin's `su -c`
+argument mangling — moves into the plugin but does not disappear. Keep the
+existing `*_test.go` golden tests as the trace of those quirks, and port them
+to the plugin's vitest suite as each runtime is migrated.
 
 ## Reference ports
 

@@ -66,7 +66,6 @@ func TestDaemonZonesFlags(t *testing.T) {
 
 func TestBuildProvisionerWiresZones(t *testing.T) {
 	p, err := buildProvisioner("zones", "", "", "", "", "", "", 0, "", "",
-		"", "", "", 0, "", "", 22, "", "", "", 0, 0,
 		zones.Options{ZonePath: "/rpool1/zones"}, freebsd.TemplateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +77,6 @@ func TestBuildProvisionerWiresZones(t *testing.T) {
 
 func TestBuildProvisionerWiresTemplate(t *testing.T) {
 	p, err := buildProvisioner("jail", "organization.tgz", "", "", "shared", "", "", 0, "", "",
-		"", "", "", 0, "", "", 22, "", "", "", 0, 0,
 		zones.Options{},
 		freebsd.TemplateOptions{BaseURL: "https://example.invalid/templates", VerifySignature: true})
 	if err != nil {

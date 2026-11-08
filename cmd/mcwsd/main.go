@@ -22,7 +22,6 @@ import (
 	"github.com/davidcrumpton/mcwsd/internal/backend/docker"
 	"github.com/davidcrumpton/mcwsd/internal/backend/freebsd"
 	"github.com/davidcrumpton/mcwsd/internal/backend/kubernetes"
-	"github.com/davidcrumpton/mcwsd/internal/backend/openbsd"
 	"github.com/davidcrumpton/mcwsd/internal/backend/podman"
 	"github.com/davidcrumpton/mcwsd/internal/backend/zones"
 	"github.com/davidcrumpton/mcwsd/internal/capacity"
@@ -142,20 +141,6 @@ func newDaemonCmd() *cobra.Command {
 		escalationCommand    string
 		baseTemplate         freebsd.TemplateOptions
 
-		// OpenBSD vmd (runtime=vmd|openbsd only)
-		vmdVMRoot                 string
-		vmdMasterImage            string
-		vmdMemory                 string
-		vmdProcessors             int
-		vmdLoginUser              string
-		vmdSSHKey                 string
-		vmdSSHPort                int
-		vmdGuestOS                string
-		vmdEscalationCommand      string
-		vmdGuestEscalationCommand string
-		vmdBootTimeout            time.Duration
-		vmdSSHProbeTimeout        time.Duration
-
 		// illumos / OpenIndiana zones (runtime=zones|openindiana only)
 		zonesOpts       zones.Options
 		zonesDNSServers string
@@ -229,7 +214,7 @@ serves the workspace API, and cleans up stale workspaces periodically.
 
 Flags are grouped into three concerns:
 
-	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, jail, vmd, zones)
+	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, jail, zones)
   Backend      -- daemon lifecycle, networking, cache, capacity gating
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -243,8 +228,6 @@ Flags are grouped into three concerns:
 				freebsdIPBaseNetwork, freebsdIPPoolSize, freebsdDNSServers,
 				escalationCommand,
 				baseTemplate,
-				vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors, vmdLoginUser, vmdSSHKey,
-				vmdSSHPort, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand, vmdBootTimeout, vmdSSHProbeTimeout,
 				zonesOpts,
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
@@ -274,7 +257,7 @@ Flags are grouped into three concerns:
 	f := cmd.Flags()
 
 	// -- Provisioner --
-	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, jail (FreeBSD), vmd/openbsd (OpenBSD), or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
+	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, jail (FreeBSD), or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
 	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript); overrides --runtime. One plugin per daemon instance — run separate instances for separate runtimes.")
 
 	// FreeBSD jail settings. release has a sensible default. The interface
@@ -313,36 +296,7 @@ Flags are grouped into three concerns:
 	f.StringVar(&freebsdDNSServers, "freebsd-dns-servers", "",
 		"Comma-separated DNS server IPs; overrides template/host resolv.conf; required for static VNET (jail runtime only)")
 	f.StringVar(&escalationCommand, "escalation-command", "mdo",
-		"Privilege escalation command for the OpenBSD/FreeBSD provisioning. This is used to escalate privileges when provisioning a new workspace with the OpenBSD/FreeBSD, empty is platform default (doas for OpenBSD, mdo for FreeBSD)")
-
-	// OpenBSD vmd(8) VM settings (vmd runtime only). The master image is an
-	// administrator-built golden qcow2; every workspace gets a copy-on-write
-	// clone of it and is reached over SSH. Empty values take their documented
-	// defaults. The master image defaults to <vm-root>/disk-master.qcow2.
-	f.StringVar(&vmdVMRoot, "openbsd-vm-root", "/var/wsd/vms/openbsd",
-		"Directory under which each OpenBSD VM's disk directory is created (vmd runtime only)")
-	f.StringVar(&vmdMasterImage, "openbsd-master-image", "",
-		"Path to the administrator-built golden qcow2 that workspaces are cloned from (vmd runtime only; default <vm-root>/disk-master.qcow2)")
-	f.StringVar(&vmdMemory, "openbsd-memory", "1G",
-		"Memory size passed to vmctl(8) -m for each VM, e.g. 1G (vmd runtime only)")
-	f.IntVar(&vmdProcessors, "openbsd-processors", 1,
-		"Number of processors passed to vmctl(8) -p for each VM, e.g. 1 (vmd runtime only)")
-	f.StringVar(&vmdLoginUser, "openbsd-login-user", "root",
-		"Guest account the daemon SSHes in as; use root or a dedicated user with doas/sudo (vmd runtime only)")
-	f.StringVar(&vmdSSHKey, "openbsd-ssh-key", "/var/wsd/agent_ed25519",
-		"Host path to the SSH private key matching the public key baked into the master image (vmd runtime only)")
-	f.IntVar(&vmdSSHPort, "openbsd-ssh-port", 22,
-		"Guest SSH port (vmd runtime only)")
-	f.StringVar(&vmdGuestOS, "openbsd-guest-os", "openbsd",
-		"Operating system running inside the VM: openbsd, freebsd, or linux (vmd runtime only)")
-	f.StringVar(&vmdEscalationCommand, "openbsd-escalation-command", "doas",
-		"Host privilege escalation command for vmctl(8) create/start/stop, e.g. doas or sudo (vmd runtime only; empty runs directly)")
-	f.StringVar(&vmdGuestEscalationCommand, "openbsd-guest-escalation-command", "doas",
-		"Privilege escalation command used inside the guest VM, e.g. doas or sudo (vmd runtime only; empty runs directly; ignored when the login user is root)")
-	f.DurationVar(&vmdBootTimeout, "openbsd-boot-timeout", 5*time.Minute,
-		"How long to wait for a freshly started VM to accept SSH (vmd runtime only)")
-	f.DurationVar(&vmdSSHProbeTimeout, "openbsd-ssh-probe-timeout", 20*time.Second,
-		"Bound on a single SSH readiness probe while waiting for a VM to boot (vmd runtime only)")
+		"Privilege escalation command for the FreeBSD provisioning. This is used to escalate privileges when provisioning a new workspace with the FreeBSD jail, empty is platform default (mdo for FreeBSD)")
 
 	// illumos / OpenIndiana zones (zones runtime only). The zonepath parent
 	// must already be a ZFS dataset; mcwsd creates per-zone datasets with
@@ -496,9 +450,6 @@ func runDaemon(
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
 	baseTemplate freebsd.TemplateOptions,
-	vmdVMRoot, vmdMasterImage, vmdMemory string, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
-	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
-	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	zonesOpts zones.Options,
 	provisioningHintsFile, workspaceBasePath string,
 	bindAddress string, port int, cacheDir string, maxCacheGB int,
@@ -606,8 +557,6 @@ func runDaemon(
 		freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway,
 		freebsdIPBaseNetwork, freebsdIPPoolSize, freebsdDNSServers,
 		escalationCommand,
-		vmdVMRoot, vmdMasterImage, vmdMemory, vmdProcessors, vmdLoginUser, vmdSSHKey,
-		vmdSSHPort, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand, vmdBootTimeout, vmdSSHProbeTimeout,
 		zonesOpts,
 		baseTemplate,
 	)
@@ -840,7 +789,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 	f.DurationVar(&jobRetention, "job-retention", 24*time.Hour,
 		"Remove finished job records older than this")
 	f.StringVar(&runtimeFlag, "runtime", "docker",
-		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, jail, vmd/openbsd, or zones/openindiana")
+		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, jail, or zones/openindiana")
 	f.StringVar(&pluginFlag, "plugin", "",
 		"Path to a single .js runtime plugin used when the state file was written (overrides --runtime)")
 	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
@@ -880,7 +829,6 @@ func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetent
 	provisioner, err := buildProvisioner(
 		runtimeFlag,
 		"", "", "", "", "", "", 0, "", "", // FreeBSD fields unused for cleanup (including new IP pool params and escalationCommand)
-		"", "", "", 0, "", "", 22, "openbsd", "doas", "doas", 5*time.Minute, 20*time.Second, // vmd fields
 		zonesOpts,
 		freebsd.TemplateOptions{},
 	)
@@ -1099,9 +1047,6 @@ func buildProvisioner(
 	freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway string,
 	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
 	escalationCommand string,
-	vmdVMRoot, vmdMasterImage, vmdMemory string, vmdProcessors int, vmdLoginUser, vmdSSHKey string,
-	vmdSSHPort int, vmdGuestOS, vmdEscalationCommand, vmdGuestEscalationCommand string,
-	vmdBootTimeout, vmdSSHProbeTimeout time.Duration,
 	zonesOpts zones.Options,
 	templateOptions freebsd.TemplateOptions,
 ) (runtime.Provisioner, error) {
@@ -1151,21 +1096,6 @@ func buildProvisioner(
 		}
 
 		return p, nil
-	case "vmd", "openbsd":
-		// OpenBSD vmd(8) VM provisioner
-		return openbsd.NewVMDProvisioner(
-			vmdVMRoot,
-			vmdMasterImage,
-			vmdMemory,
-			vmdProcessors,
-			vmdLoginUser,
-			vmdSSHKey,
-			vmdSSHPort,
-			vmdGuestOS,
-		).WithEscalationCommand(vmdEscalationCommand).
-			WithGuestEscalationCommand(vmdGuestEscalationCommand).
-			WithBootTimeout(vmdBootTimeout).
-			WithSSHProbeTimeout(vmdSSHProbeTimeout), nil
 	case "zones", "openindiana":
 		// illumos / OpenIndiana zones
 		return zones.NewZonesProvisioner(zonesOpts), nil
