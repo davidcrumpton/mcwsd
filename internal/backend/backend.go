@@ -112,6 +112,10 @@ type Backend struct {
 	// refuses the workspace before any clone or container work begins. It
 	// is set once via WithCapacityCheck, from daemon-startup-time config.
 	capacityChecker *capacity.Checker
+	// maxWorkspaces, when > 0, refuses provisioning once the number of live
+	// workspaces reaches this count. It is set once via WithMaxWorkspaces,
+	// from daemon-startup-time config. 0 disables the limit.
+	maxWorkspaces int
 	// provisioningHints is daemon-level, administrator-authored guidance
 	// about the provisioned environment (privilege escalation policy,
 	// preinstalled tooling, ...) that is handed to the agent on every
@@ -183,6 +187,17 @@ func (b *Backend) WithCapacityCheck(cfg capacity.Config) *Backend {
 	if cfg.Enabled() {
 		b.capacityChecker = capacity.NewChecker(cfg)
 	}
+	return b
+}
+
+// WithMaxWorkspaces sets the maximum number of live workspaces the daemon
+// will provision. 0 (the default) disables the limit; negative values are
+// clamped to 0. Returns the receiver so it can be chained after NewBackend.
+func (b *Backend) WithMaxWorkspaces(n int) *Backend {
+	if n < 0 {
+		n = 0
+	}
+	b.maxWorkspaces = n
 	return b
 }
 

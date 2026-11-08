@@ -80,6 +80,7 @@ go build -o mcwsd cmd/mcwsd/main.go
 | `--capacity-swap-percent` | `0` | Swap threshold (%) - disable with `0` |
 | `--capacity-cpu-percent` | `0` | CPU threshold (%) - disable with `0` |
 | `--capacity-filesystems` | `-` | Comma-separated path=percent rules (e.g., `"/=90,/var=85"`) |
+| `--capacity-max-workspaces` | `0` | Max live workspaces - disable with `0` |
 
 #### Capacity Gating
 
@@ -90,7 +91,8 @@ mcwsd daemon \\
   --capacity-memory-percent 90 \\
   --capacity-swap-percent 50 \\
   --capacity-cpu-percent 95 \\
-  --capacity-filesystems "/=90,/var=85,/usr/local/jails=95"
+  --capacity-filesystems "/=90,/var=85,/usr/local/jails=95" \\
+  --capacity-max-workspaces 20
 ```
 
 Each filesystem rule applies to the filesystem containing the specified path, allowing independent gating for root, jail pools, and workspace directories. Memory, swap, and CPU checks work on Linux and FreeBSD; on other platforms, setting these values at startup results in an error rather than silently ignored settings.

@@ -31,7 +31,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.300"
+	Version         = "0.4.350"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -160,6 +160,7 @@ func newDaemonCmd() *cobra.Command {
 		capacitySwapPercent   float64
 		capacityCPUPercent    float64
 		capacityFilesystems   string
+		capacityMaxWorkspaces int
 	)
 
 	// ---- background job limits ----
@@ -229,7 +230,7 @@ Flags are grouped into three concerns:
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
 				tlsCertFile, tlsKeyFile,
-				capacityMemoryPercent, capacitySwapPercent, capacityCPUPercent, capacityFilesystems,
+				capacityMemoryPercent, capacitySwapPercent, capacityCPUPercent, capacityFilesystems, capacityMaxWorkspaces,
 				gitAuthMode, gitForgeType,
 				gitSSHKeyPathEnvVar, gitSSHKnownHostsEnvVar,
 				gitlabTokenEnvVar, gitlabTokenUsername, gitlabAPIBase, gitlabProjectPath,
@@ -314,6 +315,8 @@ Flags are grouped into three concerns:
 		"Refuse to provision when host CPU usage is at or above this percent (0 disables)")
 	f.StringVar(&capacityFilesystems, "capacity-filesystems", "",
 		`Comma-separated path=maxpercent filesystem rules, e.g. "/=90,/var=85,/usr/local/jails=95" (empty disables)`)
+	f.IntVar(&capacityMaxWorkspaces, "capacity-max-workspaces", 0,
+		"Refuse to provision when the number of live workspaces is at or above this count (0 disables)")
 
 	// -- Forge / git auth --
 	// Governs the ONE privileged operation in mcwsd (commit_and_pr) and is
@@ -377,6 +380,7 @@ func runDaemon(
 	tlsCertFile, tlsKeyFile string,
 	capacityMemoryPercent, capacitySwapPercent, capacityCPUPercent float64,
 	capacityFilesystems string,
+	capacityMaxWorkspaces int,
 	gitAuthMode, gitForgeType string,
 	gitSSHKeyPathEnvVar, gitSSHKnownHostsEnvVar string,
 	gitlabTokenEnvVar, gitlabTokenUsername, gitlabAPIBase, gitlabProjectPath string,
@@ -470,6 +474,9 @@ func runDaemon(
 			"cpu_percent", capacityCfg.CPUPercent,
 			"filesystems", len(capacityCfg.Filesystems))
 	}
+	if capacityMaxWorkspaces > 0 {
+		internal.Log.Info("max_workspaces_configured", "limit", capacityMaxWorkspaces)
+	}
 
 	// Create provisioner
 	provisioner, err := buildProvisioner()
@@ -506,7 +513,7 @@ func runDaemon(
 	if err != nil {
 		return fmt.Errorf("failed to create backend: %w", err)
 	}
-	backend.WithCapacityCheck(capacityCfg).WithProvisioningHints(provisioningHints)
+	backend.WithCapacityCheck(capacityCfg).WithMaxWorkspaces(capacityMaxWorkspaces).WithProvisioningHints(provisioningHints)
 	backend.WithExecWait(execWaitSeconds)
 	backend.WithProvisionWait(provisionWaitSeconds).WithProvisionTimeout(provisionTimeout)
 	if _, err := backend.WithJobs(jobsFile, jobLimits); err != nil {

@@ -411,6 +411,12 @@ These options refuse provisioning when the host is already under pressure.
 --capacity-filesystems '/=90,/var=85,/usr/local/jails=95'
 ```
 
+### `--capacity-max-workspaces`
+
+- Type: int
+- Default: `0`
+- Refuse to provision when the number of live workspaces is at or above this count. `0` disables the limit.
+
 ## Forge and git auth flags
 
 These settings control the single privileged `commit_and_pr` capability, which is a startup decision rather than a request-time choice.

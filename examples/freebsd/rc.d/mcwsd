@@ -46,6 +46,7 @@ load_rc_config $name
 : ${mcwsd_capacity_swap_percent:="0"}
 : ${mcwsd_capacity_cpu_percent:="0"}
 : ${mcwsd_capacity_filesystems:=""}
+: ${mcwsd_capacity_max_workspaces:="0"}
 : ${mcwsd_max_jobs_per_workspace:="1"}
 : ${mcwsd_max_jobs_total:="0"}
 : ${mcwsd_job_max_runtime:="0s"}
@@ -128,6 +129,7 @@ command_args="${command_args} --capacity-memory-percent=${mcwsd_capacity_memory_
 command_args="${command_args} --capacity-swap-percent=${mcwsd_capacity_swap_percent}"
 command_args="${command_args} --capacity-cpu-percent=${mcwsd_capacity_cpu_percent}"
 command_args="${command_args} --capacity-filesystems=${mcwsd_capacity_filesystems}"
+command_args="${command_args} --capacity-max-workspaces=${mcwsd_capacity_max_workspaces}"
 command_args="${command_args} --max-jobs-per-workspace=${mcwsd_max_jobs_per_workspace}"
 command_args="${command_args} --max-jobs-total=${mcwsd_max_jobs_total}"
 command_args="${command_args} --job-max-runtime=${mcwsd_job_max_runtime}"

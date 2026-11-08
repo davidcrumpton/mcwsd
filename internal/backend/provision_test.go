@@ -172,3 +172,32 @@ func TestProvisionJobPersisted(t *testing.T) {
 		t.Fatalf("job workspace = %q, want %q", e.WorkspaceID, res.WorkspaceID)
 	}
 }
+
+func TestMaxWorkspacesLimit(t *testing.T) {
+	b := newProvisionTestBackend(t)
+	b.WithMaxWorkspaces(1)
+
+	first, err := b.Provision(context.Background(), internal.ProvisionRequest{})
+	if err != nil {
+		t.Fatalf("first Provision: %v", err)
+	}
+	if first.Workspace == nil {
+		t.Fatal("first provision should return a workspace")
+	}
+
+	if _, err := b.Provision(context.Background(), internal.ProvisionRequest{}); err == nil {
+		t.Fatal("second Provision under limit of 1 = nil, want error")
+	}
+
+	if err := b.Destroy(context.Background(), first.Workspace); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+
+	second, err := b.Provision(context.Background(), internal.ProvisionRequest{})
+	if err != nil {
+		t.Fatalf("Provision after destroy: %v", err)
+	}
+	if second.Workspace == nil {
+		t.Fatal("provision after destroy should return a workspace")
+	}
+}

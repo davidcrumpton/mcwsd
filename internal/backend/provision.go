@@ -319,6 +319,22 @@ func (b *Backend) Provision(ctx context.Context, req internal.ProvisionRequest) 
 // fast — before a job is started — rather than surfacing inside the
 // background pipeline.
 func (b *Backend) validateProvision(spec internal.WorkspaceSpec) error {
+	// Max-workspaces gate: refuse once the number of live workspaces hits
+	// the configured ceiling. This applies to every provision — blank or
+	// otherwise — so it runs before the blank-repo early return below.
+	// Best-effort like the host-resource checks: it is sampled at the top of
+	// Provision, before any work is done, so a burst of concurrent requests
+	// can briefly overshoot by the number of in-flight provisions.
+	if b.maxWorkspaces > 0 {
+		b.mu.RLock()
+		live := len(b.workspaces)
+		b.mu.RUnlock()
+		if live >= b.maxWorkspaces {
+			logger.Warn("max_workspaces_reached", "live", live, "limit", b.maxWorkspaces)
+			return fmt.Errorf("provisioning refused: %d live workspaces >= %d limit", live, b.maxWorkspaces)
+		}
+	}
+
 	// A blank repo means there is nothing to clone, so no forge auth is needed.
 	if strings.TrimSpace(spec.RepoURL) == "" {
 		return nil
