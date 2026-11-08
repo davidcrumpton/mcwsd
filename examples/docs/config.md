@@ -292,13 +292,13 @@ These control basic daemon behavior and resource management.
 ### `--state-file`
 
 - Type: string
-- Default: `$HOME/wsd/state.json`
+- Default: empty → `$HOME/wsd/<plugin>.state.json`
 - Path used to track workspace state and help find stale leftover workspaces.
 
 ### `--jobs-file`
 
 - Type: string
-- Default: `$HOME/wsd/jobs.json`
+- Default: empty → `$HOME/wsd/<plugin>.jobs.json`
 - Path to background job metadata. Empty disables persistence.
 
 ### `--max-jobs-per-workspace`

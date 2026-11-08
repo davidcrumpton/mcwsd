@@ -47,8 +47,8 @@ exactly as described in this document.
 | `<zonepath>/wsd-<workspace-id>/` | Per-workspace zone root (created by `zoneadm`) |
 | `<zonepath>/wsd-golden/` | Optional golden zone used as a clone source |
 | `<workspace-base-path>/<workspace-id>/` | Host-side repo checkout, lofs-mounted into the zone |
-| `<state-file>` | Workspace tracking file (default `/var/lib/wsd/state.json`) |
-| `<cache-dir>` | Dependency cache, lofs-mounted into the zone (default `/var/lib/wsd/cache`) |
+| `<state-file>` | Workspace tracking file (default `~/wsd/<plugin>.state.json`) |
+| `<cache-dir>` | Dependency cache, lofs-mounted into the zone (default `~/wsd/cache`) |
 
 The parent of every zone path **must be a ZFS dataset**. A plain directory on a
 ZFS filesystem is not enough; `zoneadm install` creates a child dataset for the
@@ -491,8 +491,8 @@ These mirror the FreeBSD jail plugin flags.
 | `--zones-escalation` | Privilege escalation command: `pfexec`, `sudo`, `doas`, or empty | `pfexec` |
 | `--zones-boot-timeout` | How long to wait for a booted zone to accept `zlogin` | `5m` |
 | `--workspace-base-path` | Host dir for per-workspace checkouts | `~/wsd-workspaces` |
-| `--cache-dir` | Dependency cache directory | `/var/lib/wsd/cache` |
-| `--state-file` | Workspace tracking file | `/var/lib/wsd/state.json` |
+| `--cache-dir` | Dependency cache directory | `~/wsd/cache` |
+| `--state-file` | Workspace tracking file | `~/wsd/<plugin>.state.json` |
 | `--bind-address` | HTTP bind address | `127.0.0.1` |
 | `--port` | HTTP listen port | `8080` |
 

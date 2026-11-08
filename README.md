@@ -68,9 +68,9 @@ go build -o mcwsd cmd/mcwsd/main.go
 | Flag | Default | Description |
 | ------ | --------- | ------------- |
 | `--port` | `8080` | HTTP port to listen on |
-| `--cache-dir` | `/var/lib/wsd/cache` | Dependency cache directory |
+| `--cache-dir` | `~/wsd/cache` | Dependency cache directory |
 | `--max-cache-gb` | `20` | Maximum cache size in GB |
-| `--state-file` | `/var/lib/wsd/state.json` | Workspace tracking file path |
+| `--state-file` | `<plugin>.state.json` under the wsd dir | Workspace tracking file path |
 | `--workspace-ttl` | `24h` | Workspace TTL before auto-destruction |
 | `--prune-interval` | `1h` | How often to prune stale workspaces while running |
 | `--prune-on-startup` | `true` | Prune on startup before serving requests |
@@ -245,7 +245,7 @@ Job behavior is bounded by daemon flags:
 
 | Flag | Default | Description |
 | ------ | --------- | ------------- |
-| `--jobs-file` | `~/wsd/jobs.json` | Job tracking file (empty disables persistence) |
+| `--jobs-file` | `<plugin>.jobs.json` under the wsd dir | Job tracking file (empty disables persistence) |
 | `--max-jobs-per-workspace` | `1` | Concurrent background jobs per workspace (0 = unlimited) |
 | `--max-jobs-total` | `0` | Concurrent background jobs daemon-wide (0 = unlimited) |
 | `--job-max-runtime` | `0` | Daemon-wide cap on job duration (0 = disabled) |

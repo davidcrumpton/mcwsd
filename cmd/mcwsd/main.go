@@ -24,13 +24,14 @@ import (
 	"github.com/davidcrumpton/mcwsd/internal/jobs"
 	"github.com/davidcrumpton/mcwsd/internal/runtime"
 	"github.com/davidcrumpton/mcwsd/internal/script"
+	"github.com/davidcrumpton/mcwsd/internal/state"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.100"
+	Version         = "0.4.300"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -60,6 +61,20 @@ func currentUserHomeDir() (string, error) {
 		return "", fmt.Errorf("current user has no home directory")
 	}
 	return currentUser.HomeDir, nil
+}
+
+// wsdBaseDir returns the default per-user data directory (~/wsd) that the
+// daemon and its companion commands (cleanup, status) use for the state and
+// job files when run in a user account. mcwsd is meant to run either as a
+// per-user workstation daemon (home-dir based, this default) or as a
+// dedicated host daemon; the latter passes explicit /var/... paths via
+// --state-file/--jobs-file instead. No /var/... path is hard-coded here.
+func wsdBaseDir() string {
+	homeDir, err := currentUserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+	return filepath.Join(homeDir, "wsd")
 }
 
 func main() {
@@ -183,6 +198,11 @@ func newDaemonCmd() *cobra.Command {
 		gitCommitName          string
 	)
 
+	homeDir, err := currentUserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run the workspace daemon (default mode)",
@@ -197,6 +217,13 @@ Flags are grouped into three concerns:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scriptPluginErr != nil {
 				return scriptPluginErr
+			}
+			var err error
+			if stateFile, err = resolvePerRuntimePath(stateFile, wsdBaseDir(), pluginName(), ".state.json"); err != nil {
+				return err
+			}
+			if jobsFile, err = resolvePerRuntimePath(jobsFile, wsdBaseDir(), pluginName(), ".jobs.json"); err != nil {
+				return err
 			}
 			return runDaemon(
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
@@ -230,13 +257,9 @@ Flags are grouped into three concerns:
 	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript). One plugin per daemon instance — run separate instances for separate runtimes.")
 
 	// -- Backend --
-	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", "/etc/wsd/provisioning_hints.json",
+	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", filepath.Join(wsdBaseDir(), "etc", "provisioning_hints.json"),
 		"Path to a JSON file of environment hints handed to the agent on every workspace (optional; empty disables)")
 
-	homeDir, err := currentUserHomeDir()
-	if err != nil {
-		panic(err)
-	}
 	f.StringVar(&workspaceBasePath, "workspace-base-path", homeDir+"/wsd-workspaces",
 		"Base directory for workspace repos on the host")
 	f.StringVar(&bindAddress, "bind-address", "127.0.0.1",
@@ -247,10 +270,10 @@ Flags are grouped into three concerns:
 		"Directory for dependency cache")
 	f.IntVar(&maxCacheGB, "max-cache-gb", 20,
 		"Maximum cache size in GB")
-	f.StringVar(&stateFile, "state-file", homeDir+"/wsd/state.json",
-		"Path to the workspace tracking file used to find and clean up leftover containers")
-	f.StringVar(&jobsFile, "jobs-file", homeDir+"/wsd/jobs.json",
-		"Path to the background-job tracking file (empty disables job persistence)")
+	f.StringVar(&stateFile, "state-file", "",
+		"Path to the workspace tracking file used to find and clean up leftover containers (empty derives <plugin>.state.json under the daemon's wsd directory)")
+	f.StringVar(&jobsFile, "jobs-file", "",
+		"Path to the background-job tracking file (empty derives <plugin>.jobs.json under the daemon's wsd directory)")
 	f.IntVar(&maxJobsPerWorkspace, "max-jobs-per-workspace", 1,
 		"Maximum concurrent background jobs per workspace (0 disables the limit)")
 	f.IntVar(&maxJobsTotal, "max-jobs-total", 0,
@@ -659,15 +682,22 @@ Both flags may be combined. Neither requires forge configuration.`,
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
+			var err error
+			if stateFile, err = resolvePerRuntimePath(stateFile, wsdBaseDir(), pluginName(), ".state.json"); err != nil {
+				return err
+			}
+			if jobsFile, err = resolvePerRuntimePath(jobsFile, wsdBaseDir(), pluginName(), ".jobs.json"); err != nil {
+				return err
+			}
 			return runCleanup(stateFile, jobsFile, workspaceTTL, jobRetention, doOrphans, doPrune)
 		},
 	}
 
 	f := cmd.Flags()
-	f.StringVar(&stateFile, "state-file", "/var/lib/wsd/state.json",
-		"Path to the workspace tracking file")
-	f.StringVar(&jobsFile, "jobs-file", "/var/lib/wsd/jobs.json",
-		"Path to the background-job tracking file (empty disables job cleanup)")
+	f.StringVar(&stateFile, "state-file", "",
+		"Path to the workspace tracking file (empty derives <plugin>.state.json under ~/wsd)")
+	f.StringVar(&jobsFile, "jobs-file", "",
+		"Path to the background-job tracking file (empty derives <plugin>.jobs.json under ~/wsd)")
 	f.DurationVar(&jobRetention, "job-retention", 24*time.Hour,
 		"Remove finished job records older than this")
 	f.StringVar(&pluginFlag, "plugin", "",
@@ -777,18 +807,35 @@ func runCleanup(stateFile, jobsFile string, workspaceTTL, jobRetention time.Dura
 // ---------------------------------------------------------------------------
 
 func newStatusCmd() *cobra.Command {
-	var stateFile string
+	var (
+		stateFile  string
+		pluginFlag string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show tracked workspaces from the state file",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if scriptPluginErr != nil {
+				return scriptPluginErr
+			}
+			var err error
+			if stateFile, err = resolvePerRuntimePath(stateFile, wsdBaseDir(), pluginName(), ".state.json"); err != nil {
+				return err
+			}
 			return runStatus(stateFile)
 		},
 	}
 
-	cmd.Flags().StringVar(&stateFile, "state-file", "/var/lib/wsd/state.json",
-		"Path to the workspace tracking file")
+	f := cmd.Flags()
+	f.StringVar(&pluginFlag, "plugin", "",
+		"Path to a single .js runtime plugin used when the state file was written (needed to locate the per-plugin state file)")
+	f.StringVar(&stateFile, "state-file", "",
+		"Path to the workspace tracking file (empty derives <plugin>.state.json under ~/wsd)")
+
+	if p := preScanPluginPath(os.Args); p != "" && invokedSubcommand(os.Args) == "status" {
+		loadScriptPlugin(p, f)
+	}
 
 	return cmd
 }
@@ -799,20 +846,14 @@ func runStatus(stateFile string) error {
 		return fmt.Errorf("failed to generate session id: %w", err)
 	}
 
-	// Build a minimal backend just to read the state file.
-	backend, err := appbackend.NewBackend(
-		nil, // no provisioner needed for status
-		"", 0,
-		gitpush.Config{},
-		sessionID,
-		stateFile,
-		"", "", "",
-	)
+	// Read the state file directly — status does not need a provisioner or a
+	// cache manager, only the leftover index.
+	store, err := state.NewStore(stateFile)
 	if err != nil {
 		return fmt.Errorf("failed to read state file: %w", err)
 	}
 
-	leftovers := backend.Leftovers()
+	leftovers := store.Orphans(sessionID)
 	if len(leftovers) == 0 {
 		fmt.Println("No tracked workspaces found in state file.")
 		return nil
@@ -889,6 +930,46 @@ func loadScriptPlugin(path string, fs *pflag.FlagSet) {
 	}
 	scriptPluginRuntime = rt
 	scriptPluginOptions = vals
+}
+
+// pluginName returns the loaded plugin's name, or "" when no plugin was loaded.
+func pluginName() string {
+	if scriptPluginRuntime == nil {
+		return ""
+	}
+	return scriptPluginRuntime.Name
+}
+
+// safePluginName validates that a plugin's name is a single, safe filesystem
+// path component, so it can be spliced into a state/jobs filename without
+// escaping the base directory.
+func safePluginName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("plugin name is empty")
+	}
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("plugin name %q is not a safe filename component", name)
+	}
+	return name, nil
+}
+
+// resolvePerRuntimePath returns the explicit path when set, otherwise derives a
+// per-plugin path under baseDir using the loaded plugin's name. suffix is the
+// filename tail, e.g. ".state.json" or ".jobs.json". This is what keeps the
+// state/jobs files of different runtimes from colliding on a shared path.
+func resolvePerRuntimePath(explicit, baseDir, pluginName, suffix string) (string, error) {
+	if strings.TrimSpace(explicit) != "" {
+		return explicit, nil
+	}
+	if strings.TrimSpace(pluginName) == "" {
+		return "", fmt.Errorf("no runtime plugin loaded: pass --plugin <path> (or an explicit --state-file/--jobs-file)")
+	}
+	safe, err := safePluginName(pluginName)
+	if err != nil {
+		return "", fmt.Errorf("cannot derive state path: %w (pass --state-file or --jobs-file explicitly)", err)
+	}
+	return filepath.Join(baseDir, safe+suffix), nil
 }
 
 // buildProvisioner constructs the runtime.Provisioner from the loaded script

@@ -665,8 +665,8 @@ go build -o /usr/local/bin/mcwsd cmd/mcwsd/main.go
 | `--freebsd-dns-servers` | Comma-separated DNS server IPs; required for static VNET | *(empty)* |
 | `--escalation-command` | Host escalator for jail(8)/jexec(8)/tar (`mdo`, `sudo`, `doas`, or empty) | `mdo` |
 | `--workspace-base-path` | Host dir for per-workspace checkouts | `~/wsd-workspaces` |
-| `--cache-dir` | Dependency cache directory | `/var/lib/wsd/cache` |
-| `--state-file` | Workspace tracking file | `/var/lib/wsd/state.json` |
+| `--cache-dir` | Dependency cache directory | `~/wsd/cache` |
+| `--state-file` | Workspace tracking file | `~/wsd/<plugin>.state.json` |
 | `--bind-address` | HTTP bind address | `127.0.0.1` |
 | `--port` | HTTP listen port | `8080` |
 
