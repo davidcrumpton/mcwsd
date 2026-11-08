@@ -370,7 +370,7 @@ const openbsdVMDPlugin = {
     if (started.exit_code !== 0) {
       throw new Error("failed to start VM " + vmName + ": " + started.stderr);
     }
-    const vmID = parseVMID(str(started.stdout));
+    const vmID = parseVMID(str(started.stdout) + "\n" + str(started.stderr));
     const ip = localGuestIP(vmID);
     waitForSSH(ip);
     return handleFor(vmName, ip, spec.work_dir);

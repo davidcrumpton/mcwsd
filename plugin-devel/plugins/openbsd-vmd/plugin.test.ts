@@ -47,7 +47,7 @@ function captureHost(runs: RunCall[]) {
       runs.push({ argv });
       const joined = argv.join(" ");
       if (joined.indexOf("vmctl start") !== -1) {
-        return { stdout: "vmctl: started vm 6 successfully, tty /dev/ttyp3\n", stderr: "", exit_code: 0 };
+        return { stdout: "", stderr: "vmctl: started vm 6 successfully, tty /dev/ttyp3\n", exit_code: 0 };
       }
       if (joined.indexOf("arp -an") !== -1) {
         return { stdout: "? (100.64.6.3) at 00:00:00:00:00:00 on tap0\n", stderr: "", exit_code: 0 };
@@ -166,7 +166,7 @@ describe("openbsd-vmd plugin", () => {
         runs.push({ argv });
         const joined = argv.join(" ");
         if (joined.indexOf("vmctl start") !== -1) {
-          return { stdout: "vmctl: started vm 6 successfully, tty /dev/ttyp3\n", stderr: "", exit_code: 0 };
+          return { stdout: "", stderr: "vmctl: started vm 6 successfully, tty /dev/ttyp3\n", exit_code: 0 };
         }
         if (joined.indexOf("arp -an") !== -1) {
           return { stdout: "? (100.64.6.3) at 00:00:00:00:00:00\n", stderr: "", exit_code: 0 };
@@ -188,7 +188,7 @@ describe("openbsd-vmd plugin", () => {
         runs.push({ argv });
         const joined = argv.join(" ");
         if (joined.indexOf("vmctl start") !== -1) {
-          return { stdout: "vmctl: started vm 6 successfully, tty /dev/ttyp3\n", stderr: "", exit_code: 0 };
+          return { stdout: "", stderr: "vmctl: started vm 6 successfully, tty /dev/ttyp3\n", exit_code: 0 };
         }
         if (joined.indexOf("arp -an") !== -1) {
           return { stdout: "? (100.64.6.3) at 00:00:00:00:00:00\n", stderr: "", exit_code: 0 };

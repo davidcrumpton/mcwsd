@@ -513,7 +513,10 @@ const openbsdVMDPlugin: RuntimePlugin = {
       throw new Error("failed to start VM " + vmName + ": " + started.stderr);
     }
 
-    const vmID = parseVMID(str(started.stdout));
+    // vmctl(8) prints "started vm N successfully" on stderr, not stdout, so
+    // the VM ID is parsed from the combined output (the native provisioner
+    // read CombinedOutput for the same reason).
+    const vmID = parseVMID(str(started.stdout) + "\n" + str(started.stderr));
     const ip = localGuestIP(vmID);
 
     waitForSSH(ip);

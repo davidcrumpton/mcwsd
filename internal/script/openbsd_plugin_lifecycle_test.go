@@ -28,7 +28,7 @@ func TestOpenBSDVMDPluginLifecycle(t *testing.T) {
 	writeScript(t, filepath.Join(bin, "arp"), "#!/bin/sh\nprintf '? (100.64.6.3) at 00:00:00:00:00:00 on tap0\\n'\n")
 	writeScript(t, filepath.Join(bin, "nc"), "#!/bin/sh\nexit 0\n")
 	writeScript(t, filepath.Join(bin, "ssh"), "#!/bin/sh\nprintf '%s\\n' \"$*\"\nexit 0\n")
-	writeScript(t, filepath.Join(bin, "vmctl"), "#!/bin/sh\ncase \"$*\" in\n  *start*) printf 'vmctl: started vm 6 successfully, tty /dev/ttyp3\\n' ;;\nesac\nexit 0\n")
+	writeScript(t, filepath.Join(bin, "vmctl"), "#!/bin/sh\ncase \"$*\" in\n  *start*) printf 'vmctl: started vm 6 successfully, tty /dev/ttyp3\\n' >&2 ;;\nesac\nexit 0\n")
 
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
