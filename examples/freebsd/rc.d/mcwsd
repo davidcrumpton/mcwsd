@@ -26,7 +26,7 @@ load_rc_config $name
 # Defaults
 : ${mcwsd_source_env_file:="/usr/local/etc/wsd/env"}
 : ${mcwsd_enable:="NO"}
-: ${mcwsd_runtime:="jail"}  # default to jail on FreeBSD
+: ${mcwsd_plugin:="/usr/local/lib/mcwsd/plugins/freebsd-jail.js"}
 : ${mcwsd_user:="wsd"}
 : ${mcwsd_group:="wsd"}
 : ${mcwsd_pidfile:="/var/run/${name}.pid"}
@@ -113,7 +113,7 @@ command_args="-f -p ${pidfile} -o /var/log/${name}.log /usr/local/bin/mcwsd daem
 command_args="${command_args} --port ${mcwsd_port}"
 command_args="${command_args} --workspace-base-path ${mcwsd_workspace_base_path}"
 command_args="${command_args} --cache-dir ${mcwsd_cache_dir}"
-command_args="${command_args} --runtime ${mcwsd_runtime}"
+command_args="${command_args} --plugin=${mcwsd_plugin}"
 command_args="${command_args} --state-file ${mcwsd_state_file}"
 command_args="${command_args} --provisioning-hints-file=${mcwsd_provisioning_hints_file}"
 command_args="${command_args} --max-cache-gb=${mcwsd_max_cache_gb}"
@@ -217,51 +217,47 @@ if [ -n "${mcwsd_git_auth_mode}" ] && [ "${mcwsd_git_auth_mode}" = "ssh" ]; then
     fi
 fi
 
-# Runtime-specific configuration
-case ${mcwsd_runtime} in
-    jail|freebsd)
-        command_args="${command_args} --freebsd-release=${mcwsd_freebsd_release}"
-        command_args="${command_args} --freebsd-network-mode=${mcwsd_freebsd_network_mode}"
-        command_args="${command_args} --freebsd-ip-pool-size=${mcwsd_freebsd_ip_pool_size}"
-        command_args="${command_args} --escalation-command=${mcwsd_escalation_command}"
-        if [ -n "${mcwsd_base_template_url}" ]; then
-            command_args="${command_args} --base-template-url=${mcwsd_base_template_url}"
-        fi
-        if [ -n "${mcwsd_base_template_user}" ]; then
-            command_args="${command_args} --base-template-user=${mcwsd_base_template_user}"
-        fi
-        if [ -n "${mcwsd_base_template_password_env}" ]; then
-            command_args="${command_args} --base-template-password-env=${mcwsd_base_template_password_env}"
-        fi
-        if [ -n "${mcwsd_base_template_header}" ]; then
-            command_args="${command_args} --base-template-header=${mcwsd_base_template_header}"
-        fi
-        if [ -n "${mcwsd_base_template_header_env}" ]; then
-            command_args="${command_args} --base-template-header-env=${mcwsd_base_template_header_env}"
-        fi
-        if checkyesno mcwsd_verify_signature; then
-            command_args="${command_args} --verify-signature=true"
-        fi
-        if [ -n "${mcwsd_template_public_key}" ]; then
-            command_args="${command_args} --template-public-key=${mcwsd_template_public_key}"
-        fi
-        if [ -n "${mcwsd_freebsd_ip4_address}" ]; then
-            command_args="${command_args} --freebsd-ip4-address=${mcwsd_freebsd_ip4_address}"
-        fi
-        if [ -n "${mcwsd_freebsd_interface}" ]; then
-            command_args="${command_args} --freebsd-interface=${mcwsd_freebsd_interface}"
-        fi
-        if [ -n "${mcwsd_freebsd_vnet_gateway}" ]; then
-            command_args="${command_args} --freebsd-vnet-gateway=${mcwsd_freebsd_vnet_gateway}"
-        fi
-        if [ -n "${mcwsd_freebsd_ip_base_network}" ]; then
-            command_args="${command_args} --freebsd-ip-base-network=${mcwsd_freebsd_ip_base_network}"
-        fi
-        if [ -n "${mcwsd_freebsd_dns_servers}" ]; then
-            command_args="${command_args} --freebsd-dns-servers=${mcwsd_freebsd_dns_servers}"
-        fi
-        ;;
-esac
+# Runtime-specific configuration (FreeBSD jail plugin)
+command_args="${command_args} --freebsd-release=${mcwsd_freebsd_release}"
+command_args="${command_args} --freebsd-network-mode=${mcwsd_freebsd_network_mode}"
+command_args="${command_args} --ip-pool-size=${mcwsd_freebsd_ip_pool_size}"
+command_args="${command_args} --escalation-command=${mcwsd_escalation_command}"
+if [ -n "${mcwsd_base_template_url}" ]; then
+    command_args="${command_args} --base-template-url=${mcwsd_base_template_url}"
+fi
+if [ -n "${mcwsd_base_template_user}" ]; then
+    command_args="${command_args} --base-template-user=${mcwsd_base_template_user}"
+fi
+if [ -n "${mcwsd_base_template_password_env}" ]; then
+    command_args="${command_args} --base-template-password-env=${mcwsd_base_template_password_env}"
+fi
+if [ -n "${mcwsd_base_template_header}" ]; then
+    command_args="${command_args} --base-template-header=${mcwsd_base_template_header}"
+fi
+if [ -n "${mcwsd_base_template_header_env}" ]; then
+    command_args="${command_args} --base-template-header-env=${mcwsd_base_template_header_env}"
+fi
+if checkyesno mcwsd_verify_signature; then
+    command_args="${command_args} --verify-signature=true"
+fi
+if [ -n "${mcwsd_template_public_key}" ]; then
+    command_args="${command_args} --template-public-key=${mcwsd_template_public_key}"
+fi
+if [ -n "${mcwsd_freebsd_ip4_address}" ]; then
+    command_args="${command_args} --freebsd-ip4-address=${mcwsd_freebsd_ip4_address}"
+fi
+if [ -n "${mcwsd_freebsd_interface}" ]; then
+    command_args="${command_args} --freebsd-interface=${mcwsd_freebsd_interface}"
+fi
+if [ -n "${mcwsd_freebsd_vnet_gateway}" ]; then
+    command_args="${command_args} --freebsd-vnet-gateway=${mcwsd_freebsd_vnet_gateway}"
+fi
+if [ -n "${mcwsd_freebsd_ip_base_network}" ]; then
+    command_args="${command_args} --ip-base-network=${mcwsd_freebsd_ip_base_network}"
+fi
+if [ -n "${mcwsd_freebsd_dns_servers}" ]; then
+    command_args="${command_args} --freebsd-dns-servers=${mcwsd_freebsd_dns_servers}"
+fi
 
 if checkyesno mcwsd_audit; then
     command_args="${command_args} --audit"

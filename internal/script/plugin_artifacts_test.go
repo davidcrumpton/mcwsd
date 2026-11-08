@@ -203,3 +203,59 @@ func TestDeployedKubernetesPlugin(t *testing.T) {
 		}
 	}
 }
+
+func TestDeployedFreeBSDJailPlugin(t *testing.T) {
+	r := deployedPlugin(t, "freebsd-jail")
+	if r.Name != "freebsd-jail" || r.OS != "freebsd" || r.Isolation != "jail" {
+		t.Fatalf("metadata = %q/%q/%q", r.Name, r.OS, r.Isolation)
+	}
+	for _, b := range []string{"jail", "jexec", "jls", "tar", "chroot", "mdo", "tee", "fetch"} {
+		if !r.binaries[b] {
+			t.Fatalf("%s binary not allowed: %v", b, r.binaries)
+		}
+	}
+
+	byFlag := make(map[string]Option, len(r.Options))
+	for _, o := range r.Options {
+		byFlag[o.Flag] = o
+	}
+	if byFlag["freebsd-release"].Type != "string" || byFlag["freebsd-release"].Default != "15.1-RELEASE" {
+		t.Fatalf("freebsd-release option = %+v", byFlag["freebsd-release"])
+	}
+	if byFlag["ip-base-network"].Type != "string" {
+		t.Fatalf("ip-base-network option = %+v", byFlag["ip-base-network"])
+	}
+	if byFlag["ip-pool-size"].Type != "int" || byFlag["ip-pool-size"].Default != "0" {
+		t.Fatalf("ip-pool-size option = %+v", byFlag["ip-pool-size"])
+	}
+	if byFlag["escalation-command"].Type != "string" || byFlag["escalation-command"].Default != "mdo" {
+		t.Fatalf("escalation-command option = %+v", byFlag["escalation-command"])
+	}
+	if byFlag["verify-signature"].Type != "bool" {
+		t.Fatalf("verify-signature option = %+v", byFlag["verify-signature"])
+	}
+
+	// The transport VM's host only exposes options; bind the escalator so the
+	// execArgs mapping resolves it.
+	if err := r.bindTransportOptions(map[string]interface{}{
+		"escalation-command": "mdo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := r.newTransport("wsd-ws", map[string]interface{}{"native_id": "wsd-ws"})
+	argv, err := tr.execArgs([]string{"echo", "hi"}, "/w", []string{"A=1"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const jailPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"
+	want := []string{"mdo", "jexec", "-d", "/w", "wsd-ws", "env", "PATH=" + jailPath, "A=1", "echo", "hi"}
+	if len(argv) != len(want) {
+		t.Fatalf("argv = %v, want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q", i, argv[i], want[i])
+		}
+	}
+}

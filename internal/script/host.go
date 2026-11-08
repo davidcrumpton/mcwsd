@@ -179,6 +179,11 @@ func (c *callState) fsRead(rel string) (string, error) {
 func (c *callState) fetch(url string, opts map[string]interface{}) (string, error) {
 	// Fetch is used by jail/zone templates. It downloads to the scratch root
 	// and returns an absolute path the plugin can hand to host.run (e.g. tar).
+	// Optional opts carry Basic/header authentication (referenced by env-var
+	// name), a sha256 digest, and an OpenPGP public key whose presence enables
+	// detached-signature verification of url+".sig".
+	fo := parseFetchOpts(opts)
+
 	dest, err := os.CreateTemp(c.scratchRoot, "fetch-*")
 	if err != nil {
 		return "", err
@@ -188,14 +193,32 @@ func (c *callState) fetch(url string, opts map[string]interface{}) (string, erro
 
 	reqCtx := c.ctx
 	var cancel context.CancelFunc
-	if _, hasTimeout := opts["timeout_seconds"]; hasTimeout {
-		if v, ok := opts["timeout_seconds"].(int64); ok && v > 0 {
-			reqCtx, cancel = context.WithTimeout(c.ctx, time.Duration(v)*time.Second)
-			defer cancel()
+	if v, ok := opts["timeout_seconds"].(int64); ok && v > 0 {
+		reqCtx, cancel = context.WithTimeout(c.ctx, time.Duration(v)*time.Second)
+		defer cancel()
+	}
+
+	if err := download(reqCtx, url, name, fo, 0); err != nil {
+		return "", err
+	}
+	if fo.sha256 != "" {
+		if err := verifySHA256(name, fo.sha256); err != nil {
+			return "", err
 		}
 	}
-	if err := downloadTo(reqCtx, url, name); err != nil {
-		return "", err
+	if fo.publicKey != "" {
+		sig, err := os.CreateTemp(c.scratchRoot, "fetch-sig-*")
+		if err != nil {
+			return "", err
+		}
+		sigName := sig.Name()
+		sig.Close()
+		if err := download(reqCtx, url+".sig", sigName, fo, 1<<20); err != nil {
+			return "", err
+		}
+		if err := verifyTemplate(name, sigName, fo.publicKey); err != nil {
+			return "", err
+		}
 	}
 	return name, nil
 }

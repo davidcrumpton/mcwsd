@@ -35,24 +35,22 @@ run_rc_command() { printf '%s\n' "$command_args"; }
 `, 1)
 	for _, tc := range []struct {
 		name    string
-		runtime string
 		auth    string
 		enabled bool
 	}{
-		{"official release", "jail", "", false},
-		{"anonymous signed template", "jail", "", true},
-		{"Basic authentication", "freebsd", "basic", true},
-		{"header authentication", "jail", "header", true},
-		{"non-jail ignores template settings", "docker", "header", true},
+		{"official release", "", false},
+		{"anonymous signed template", "", true},
+		{"Basic authentication", "basic", true},
+		{"header authentication", "header", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("mcwsd_source_env_file", filepath.Join(t.TempDir(), "absent-env"))
-			t.Setenv("mcwsd_runtime", tc.runtime)
 			for _, name := range []string{"base_template_url", "base_template_user", "base_template_password_env", "base_template_header", "base_template_header_env", "template_public_key"} {
 				t.Setenv("mcwsd_"+name, "")
 			}
 			t.Setenv("mcwsd_verify_signature", "NO")
 			t.Setenv("mcwsd_freebsd_release", "15.1-RELEASE")
+			t.Setenv("mcwsd_plugin", "/usr/local/lib/mcwsd/plugins/freebsd-jail.js")
 			if tc.enabled {
 				t.Setenv("mcwsd_base_template_url", "https://templates.example.org/freebsd")
 				t.Setenv("mcwsd_freebsd_release", "organization.tgz")
@@ -84,27 +82,29 @@ run_rc_command() { printf '%s\n' "$command_args"; }
 				}
 				return false
 			}
-			jailTemplate := tc.enabled && tc.runtime != "docker"
+			if !has("--plugin=/usr/local/lib/mcwsd/plugins/freebsd-jail.js") {
+				t.Error("plugin path was not forwarded")
+			}
 			for _, arg := range []string{
 				"--base-template-url=https://templates.example.org/freebsd",
 				"--verify-signature=true",
 				"--template-public-key=/etc/wsd/template.pub",
 			} {
-				if has(arg) != jailTemplate {
-					t.Errorf("presence of %s = %t, want %t", arg, has(arg), jailTemplate)
+				if has(arg) != tc.enabled {
+					t.Errorf("presence of %s = %t, want %t", arg, has(arg), tc.enabled)
 				}
 			}
 			for arg, want := range map[string]bool{
-				"--base-template-user=mcwsd":                           jailTemplate && tc.auth == "basic",
-				"--base-template-password-env=MCWSD_TEMPLATE_PASSWORD": jailTemplate && tc.auth == "basic",
-				"--base-template-header=Authorization":                 jailTemplate && tc.auth == "header",
-				"--base-template-header-env=MCWSD_TEMPLATE_AUTH":       jailTemplate && tc.auth == "header",
+				"--base-template-user=mcwsd":                           tc.auth == "basic",
+				"--base-template-password-env=MCWSD_TEMPLATE_PASSWORD": tc.auth == "basic",
+				"--base-template-header=Authorization":                 tc.auth == "header",
+				"--base-template-header-env=MCWSD_TEMPLATE_AUTH":       tc.auth == "header",
 			} {
 				if has(arg) != want {
 					t.Errorf("presence of %s = %t, want %t", arg, has(arg), want)
 				}
 			}
-			if jailTemplate && !has("--freebsd-release=organization.tgz") {
+			if tc.enabled && !has("--freebsd-release=organization.tgz") {
 				t.Error("template filename was not forwarded")
 			}
 			if !tc.enabled && !has("--freebsd-release=15.1-RELEASE") {

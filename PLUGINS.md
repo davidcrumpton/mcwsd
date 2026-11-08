@@ -7,8 +7,8 @@ Kubernetes, and anything else. It runs inside the daemon in a `goja` VM and is
 given a small, reviewable host API instead of raw access to the machine.
 
 The native Go backends in `internal/backend/*` are being ported to these
-plugins one at a time; `podman`, `docker`, and `kubernetes` are already
-available as reference ports in `plugins/`.
+plugins one at a time; `podman`, `docker`, `kubernetes`, `openbsd-vmd`, and
+`freebsd-jail` are already available as reference ports in `plugins/`.
 
 ## One plugin per daemon instance
 
@@ -115,7 +115,7 @@ functions via `host.options`):
 | `host.env(name)` | Read a host environment variable. |
 | `host.options` | Resolved plugin options, keyed by flag name. |
 | `host.ipam` | `allocate/release/reserve/gateway/network` — the shared IP pool (core-owned). |
-| `host.fetch(url, { sha256 })` | Download to a scratch file, returning its path. |
+| `host.fetch(url, { sha256, username, password_env, header, header_env, public_key })` | Download to a scratch file, returning its path. Options add a checksum, HTTP Basic/header auth (env-var names, never values), and detached OpenPGP signature verification of `url+".sig"`. |
 | `host.fs.write/read` | File I/O confined to a per-call scratch root. |
 
 `host.run` never accepts shell strings — argv only — and rejects any binary
@@ -184,8 +184,9 @@ to the plugin's vitest suite as each runtime is migrated.
 - `plugins/docker.js` — `plugins/docker/plugin.ts` (demonstrates `options`, `setNetwork`, `bootstrapCmd`).
 - `plugins/kubernetes.js` — `plugins/kubernetes/plugin.ts` (demonstrates `init`, `recover`, a poll-based `provision`, and shell-quoted `execArgs` through `kubectl exec ... -- sh -c`).
 - `plugins/openbsd-vmd.js` — `plugins/openbsd-vmd/plugin.ts` (a VM runtime: SSH transport via `execArgs`, a three-stage readiness poll, host/guest escalation, and a per-handle `os` override).
+- `plugins/freebsd-jail.js` — `plugins/freebsd-jail/plugin.ts` (a jail runtime: `jexec` transport, shared/VNET networking, the reserved `ip-base-network`/`ip-pool-size` pool, `base.txz` + template download via `host.fetch` with Basic/header auth and OpenPGP signature verification).
 
-The remaining runtimes (FreeBSD jail, illumos zones) are the
-natural next ports; their `build*Args` functions in
-`internal/backend/*/transport.go` map directly onto `execArgs`, and their
-provisioners onto `provision`/`destroy` plus `host.run`/`host.fetch`/`host.ipam`.
+The remaining runtime (illumos zones) is the natural next port; its
+`build*Args` functions in `internal/backend/*/transport.go` map directly onto
+`execArgs`, and its provisioner onto `provision`/`destroy` plus
+`host.run`/`host.fetch`/`host.ipam`.

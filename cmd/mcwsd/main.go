@@ -20,7 +20,6 @@ import (
 	"github.com/davidcrumpton/mcwsd/internal/api"
 	appbackend "github.com/davidcrumpton/mcwsd/internal/backend"
 	"github.com/davidcrumpton/mcwsd/internal/backend/docker"
-	"github.com/davidcrumpton/mcwsd/internal/backend/freebsd"
 	"github.com/davidcrumpton/mcwsd/internal/backend/kubernetes"
 	"github.com/davidcrumpton/mcwsd/internal/backend/podman"
 	"github.com/davidcrumpton/mcwsd/internal/backend/zones"
@@ -129,18 +128,6 @@ func newDaemonCmd() *cobra.Command {
 		runtimeFlag string
 		pluginFlag  string
 
-		// FreeBSD jail (runtime=jail|freebsd only)
-		freebsdRelease       string
-		freebsdInterface     string
-		freebsdIP4Address    string
-		freebsdNetworkMode   string
-		freebsdVNETGateway   string
-		freebsdIPBaseNetwork string
-		freebsdIPPoolSize    int
-		freebsdDNSServers    string // comma-separated list
-		escalationCommand    string
-		baseTemplate         freebsd.TemplateOptions
-
 		// illumos / OpenIndiana zones (runtime=zones|openindiana only)
 		zonesOpts       zones.Options
 		zonesDNSServers string
@@ -214,7 +201,7 @@ serves the workspace API, and cleans up stale workspaces periodically.
 
 Flags are grouped into three concerns:
 
-	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, jail, zones)
+	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, zones)
   Backend      -- daemon lifecycle, networking, cache, capacity gating
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -224,10 +211,6 @@ Flags are grouped into three concerns:
 			zonesOpts.DNSServers = splitCommaList(zonesDNSServers)
 			return runDaemon(
 				runtimeFlag,
-				freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway,
-				freebsdIPBaseNetwork, freebsdIPPoolSize, freebsdDNSServers,
-				escalationCommand,
-				baseTemplate,
 				zonesOpts,
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
@@ -257,46 +240,8 @@ Flags are grouped into three concerns:
 	f := cmd.Flags()
 
 	// -- Provisioner --
-	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, jail (FreeBSD), or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
+	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
 	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript); overrides --runtime. One plugin per daemon instance — run separate instances for separate runtimes.")
-
-	// FreeBSD jail settings. release has a sensible default. The interface
-	// is only needed when a fixed IPv4 address is pinned; with no address
-	// the jail inherits the host's DHCP-assigned address (ip4 = inherit).
-	// All of these may be supplied per-workspace in the prepare request
-	// instead of here, and are ignored by the Docker and Podman runtimes.
-	f.StringVar(&freebsdRelease, "freebsd-release", "15.1-RELEASE",
-		"FreeBSD release, or archive filename when base-template-url is configured (jail runtime only)")
-	f.StringVar(&baseTemplate.BaseURL, "base-template-url", "",
-		"HTTP(S) directory URL containing custom jail archives; freebsd-release selects the filename")
-	f.StringVar(&baseTemplate.Username, "base-template-user", "",
-		"HTTP Basic authentication username for jail template downloads")
-	f.StringVar(&baseTemplate.PasswordEnv, "base-template-password-env", "",
-		"Environment variable containing the template HTTP Basic authentication password")
-	f.StringVar(&baseTemplate.Header, "base-template-header", "",
-		"Authentication header name for jail template downloads, e.g. Authorization")
-	f.StringVar(&baseTemplate.HeaderEnv, "base-template-header-env", "",
-		"Environment variable containing the complete template authentication header value")
-	f.BoolVar(&baseTemplate.VerifySignature, "verify-signature", false,
-		"Require a valid detached OpenPGP signature at <archive>.sig before using a jail template")
-	f.StringVar(&baseTemplate.PublicKey, "template-public-key", "",
-		"Local trusted OpenPGP public-key file for verify-signature (armored or binary)")
-	f.StringVar(&freebsdInterface, "freebsd-interface", "",
-		"Host network interface for FreeBSD jails, e.g. vtnet0 (jail runtime only; only needed with a fixed IP; may be supplied per workspace)")
-	f.StringVar(&freebsdIP4Address, "freebsd-ip4-address", "",
-		"IPv4 address for FreeBSD jails: plain address in shared mode, CIDR address in VNET mode (optional, omit for DHCP) (jail runtime only; may be supplied per workspace)")
-	f.StringVar(&freebsdNetworkMode, "freebsd-network-mode", "shared",
-		"FreeBSD jail network mode: shared or vnet (jail runtime only)")
-	f.StringVar(&freebsdVNETGateway, "freebsd-vnet-gateway", "",
-		"IPv4 default gateway for VNET FreeBSD jails; required only with static IP in VNET mode")
-	f.StringVar(&freebsdIPBaseNetwork, "freebsd-ip-base-network", "",
-		"Base network in CIDR notation for automatic IP allocation, e.g. 192.168.1.200/24 (jail runtime only)")
-	f.IntVar(&freebsdIPPoolSize, "freebsd-ip-pool-size", 0,
-		"Number of IP addresses to allocate from the base network; used with freebsd-ip-base-network (jail runtime only)")
-	f.StringVar(&freebsdDNSServers, "freebsd-dns-servers", "",
-		"Comma-separated DNS server IPs; overrides template/host resolv.conf; required for static VNET (jail runtime only)")
-	f.StringVar(&escalationCommand, "escalation-command", "mdo",
-		"Privilege escalation command for the FreeBSD provisioning. This is used to escalate privileges when provisioning a new workspace with the FreeBSD jail, empty is platform default (mdo for FreeBSD)")
 
 	// illumos / OpenIndiana zones (zones runtime only). The zonepath parent
 	// must already be a ZFS dataset; mcwsd creates per-zone datasets with
@@ -446,10 +391,6 @@ Flags are grouped into three concerns:
 
 func runDaemon(
 	runtimeFlag string,
-	freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway string,
-	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
-	escalationCommand string,
-	baseTemplate freebsd.TemplateOptions,
 	zonesOpts zones.Options,
 	provisioningHintsFile, workspaceBasePath string,
 	bindAddress string, port int, cacheDir string, maxCacheGB int,
@@ -554,11 +495,7 @@ func runDaemon(
 	// Create provisioner
 	provisioner, err := buildProvisioner(
 		runtimeFlag,
-		freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway,
-		freebsdIPBaseNetwork, freebsdIPPoolSize, freebsdDNSServers,
-		escalationCommand,
 		zonesOpts,
-		baseTemplate,
 	)
 	if err != nil {
 		return err
@@ -579,10 +516,6 @@ func runDaemon(
 		return fmt.Errorf("provisioner initialization failed (runtime=%s): %w", runtimeFlag, err)
 	}
 	internal.Log.Info("provisioner_initialized", "runtime", runtimeFlag)
-	// print freebsd network mode if FreeBSD
-	if freebsdNetworkMode != "" && runtimeFlag == "freebsd" {
-		internal.Log.Info("freebsd_network_mode", "mode", freebsdNetworkMode)
-	}
 	if runtimeFlag == "zones" || runtimeFlag == "openindiana" {
 		internal.Log.Info("zones_network_mode", "mode", zonesOpts.NetworkMode, "zonepath", zonesOpts.ZonePath)
 	}
@@ -789,7 +722,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 	f.DurationVar(&jobRetention, "job-retention", 24*time.Hour,
 		"Remove finished job records older than this")
 	f.StringVar(&runtimeFlag, "runtime", "docker",
-		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, jail, or zones/openindiana")
+		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, or zones/openindiana")
 	f.StringVar(&pluginFlag, "plugin", "",
 		"Path to a single .js runtime plugin used when the state file was written (overrides --runtime)")
 	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
@@ -828,9 +761,7 @@ func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetent
 	// jails/VMs — and no forge config at all.
 	provisioner, err := buildProvisioner(
 		runtimeFlag,
-		"", "", "", "", "", "", 0, "", "", // FreeBSD fields unused for cleanup (including new IP pool params and escalationCommand)
 		zonesOpts,
-		freebsd.TemplateOptions{},
 	)
 	if err != nil {
 		return err
@@ -1044,11 +975,7 @@ func splitCommaList(value string) []string {
 // It is called by both the daemon and cleanup subcommands.
 func buildProvisioner(
 	runtimeFlag string,
-	freebsdRelease, freebsdInterface, freebsdIP4Address, freebsdNetworkMode, freebsdVNETGateway string,
-	freebsdIPBaseNetwork string, freebsdIPPoolSize int, freebsdDNSServers string,
-	escalationCommand string,
 	zonesOpts zones.Options,
-	templateOptions freebsd.TemplateOptions,
 ) (runtime.Provisioner, error) {
 	if scriptPluginRuntime != nil {
 		if scriptPluginOptions == nil {
@@ -1066,36 +993,6 @@ func buildProvisioner(
 			namespace = "default"
 		}
 		return kubernetes.NewKubernetesProvisioner("", namespace), nil
-	case "jail", "freebsd":
-		// FreeBSD Jail provisioner
-		p := freebsd.NewFreeBSDJailProvisioner(
-			"/etc/jail.conf.d",
-			"/usr/local/jails",
-			freebsdRelease,
-			freebsdInterface,
-			freebsdIP4Address,
-		).WithNetworkMode(freebsdNetworkMode).
-			WithVNETGateway(freebsdVNETGateway).
-			WithEscalationCommand(escalationCommand)
-		p.WithTemplate(templateOptions)
-
-		// Configure IP pool for automatic IP allocation
-		if freebsdIPBaseNetwork != "" && freebsdIPPoolSize > 0 {
-			p = p.WithIPBaseNetwork(freebsdIPBaseNetwork).
-				WithIPPoolSize(freebsdIPPoolSize)
-		}
-
-		// Configure custom DNS servers
-		if freebsdDNSServers != "" {
-			servers := strings.Split(freebsdDNSServers, ",")
-			// Trim whitespace from each server
-			for i, s := range servers {
-				servers[i] = strings.TrimSpace(s)
-			}
-			p = p.WithDNSServers(servers)
-		}
-
-		return p, nil
 	case "zones", "openindiana":
 		// illumos / OpenIndiana zones
 		return zones.NewZonesProvisioner(zonesOpts), nil

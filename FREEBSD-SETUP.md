@@ -1,7 +1,9 @@
 # FreeBSD jail runtime setup
 
 This document describes how to configure a FreeBSD server so that `mcwsd` can
-provision workspaces as FreeBSD jails (`-runtime jail`). It covers the
+provision workspaces as FreeBSD jails. The jail runtime is shipped as a script
+plugin (`plugins/freebsd-jail.js`); run the daemon with
+`--plugin /usr/local/lib/mcwsd/plugins/freebsd-jail.js`. It covers the
 required layout, networking, running the daemon, and troubleshooting.
 
 If you are looking for the design/implementation notes for the jail
@@ -218,7 +220,7 @@ Use the HTTP URL that actually serves that directory, not its host filesystem
 path. Configure the rc service as shown below, or run the daemon directly:
 
 ```sh
-mcwsd daemon --runtime jail \
+mcwsd daemon --plugin /usr/local/lib/mcwsd/plugins/freebsd-jail.js \
   --base-template-url https://templates.example.org/freebsd \
   --freebsd-release organization-15.1-v2.tgz \
   --verify-signature \
@@ -243,8 +245,8 @@ mcwsd_verify_signature="YES"
 mcwsd_template_public_key="/usr/local/etc/wsd/organization-template.pub"
 ```
 
-The [rc script](examples/freebsd/rc.d/mcwsd) conditionally forwards these
-settings for `jail`/`freebsd` runtimes. For Basic authentication, set
+The [rc script](examples/freebsd/rc.d/mcwsd) forwards these settings for the
+FreeBSD jail plugin. For Basic authentication, set
 `mcwsd_base_template_user` and `mcwsd_base_template_password_env`. For header
 authentication, set `mcwsd_base_template_header` and
 `mcwsd_base_template_header_env` instead. Export the corresponding secret in
@@ -406,7 +408,7 @@ A non-VNET jail shares the host's network stack. There are two modes.
 
 ### DHCP / inherit (default, recommended)
 
-Start `mcwsd` **without** `-freebsd-ip4-address`. Each jail is configured with:
+Start `mcwsd` **without** `--freebsd-ip4-address`. Each jail is configured with:
 
 ```
 ip4 = inherit;
@@ -433,9 +435,9 @@ For stronger isolation, use fixed per-jail addresses (below).
 To pin an address, pass the interface and address:
 
 ```sh
-mcwsd -runtime jail \
-    -freebsd-interface vtnet0 \
-    -freebsd-ip4-address 192.168.122.100
+mcwsd daemon --plugin plugins/freebsd-jail.js \
+    --freebsd-interface vtnet0 \
+    --freebsd-ip4-address 192.168.122.100
 ```
 
 The generated config becomes:
@@ -460,7 +462,7 @@ either DHCP (simpler) or a static IP configuration.
 For DHCP configuration, only the interface and network mode are required:
 
 ```sh
-mcwsd daemon --runtime jail \
+mcwsd daemon --plugin plugins/freebsd-jail.js \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
   --port 9080
@@ -474,7 +476,7 @@ For static IP configuration, you must also provide a CIDR address, gateway,
 and explicit DNS servers:
 
 ```sh
-mcwsd daemon --runtime jail \
+mcwsd daemon --plugin plugins/freebsd-jail.js \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
   --freebsd-ip4-address 192.168.122.100/24 \
@@ -488,11 +490,11 @@ mcwsd daemon --runtime jail \
 For automatic IP allocation from a pool, configure a base network and pool size:
 
 ```sh
-mcwsd daemon --runtime jail \
+mcwsd daemon --plugin plugins/freebsd-jail.js \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
-  --freebsd-ip-base-network 192.168.1.200/24 \
-  --freebsd-ip-pool-size 50 \
+  --ip-base-network 192.168.1.200/24 \
+  --ip-pool-size 50 \
   --freebsd-dns-servers 192.168.1.1 \
   --port 9080
 ```
@@ -504,11 +506,11 @@ This will automatically assign IPs starting from 192.168.1.200, then 192.168.1.2
 You can also configure custom DNS servers for all jails:
 
 ```sh
-mcwsd daemon --runtime jail \
+mcwsd daemon --plugin plugins/freebsd-jail.js \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
-  --freebsd-ip-base-network 192.168.122.200/24 \
-  --freebsd-ip-pool-size 50 \
+  --ip-base-network 192.168.122.200/24 \
+  --ip-pool-size 50 \
   --freebsd-dns-servers "192.168.122.1,1.1.1.1" \
   --freebsd-vnet-gateway 192.168.122.1 \
   --port 9080 --debug
@@ -598,7 +600,7 @@ ownership".
 
 `pkg(8)` refuses to run unless its database directory (`/var/db/pkg`) is owned
 by UID/GID `0:0` (`root:wheel` on FreeBSD). When `wsd` runs as an
-unprivileged user via an escalation command (`-freebsd-escalation mdo`), the
+unprivileged user via an escalation command (`--escalation-command mdo`), the
 base or template archive is extracted with `<escalation> tar -xpf` so the
 entire filesystem retains its archived ownership and permissions. Without
 an escalator, the daemon must run as root. Provisioning also ensures
@@ -651,12 +653,17 @@ go build -o /usr/local/bin/mcwsd cmd/mcwsd/main.go
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--runtime` | Must be `jail` for the FreeBSD jail runtime | `docker` |
+| `--plugin` | Path to the FreeBSD jail plugin (e.g. `plugins/freebsd-jail.js`) | *(required)* |
 | `--freebsd-release` | Release to fetch/cache and boot jails from | `15.1-RELEASE` |
+| `--freebsd-arch` | Architecture used to build the base.txz download URL | `amd64` |
 | `--freebsd-network-mode` | `shared` or `vnet` | `shared` |
 | `--freebsd-interface` | Host interface; required for fixed shared IPs and VNET | *(empty)* |
 | `--freebsd-ip4-address` | Shared: plain IPv4 or empty for inherit. VNET: IPv4 CIDR (optional, omit for DHCP) | *(empty)* |
 | `--freebsd-vnet-gateway` | VNET default gateway (required only with static IP in VNET mode) | *(empty)* |
+| `--ip-base-network` | Base network in CIDR for automatic IP allocation | *(empty)* |
+| `--ip-pool-size` | Number of IPs to allocate from `--ip-base-network` | `0` |
+| `--freebsd-dns-servers` | Comma-separated DNS server IPs; required for static VNET | *(empty)* |
+| `--escalation-command` | Host escalator for jail(8)/jexec(8)/tar (`mdo`, `sudo`, `doas`, or empty) | `mdo` |
 | `--workspace-base-path` | Host dir for per-workspace checkouts | `~/wsd-workspaces` |
 | `--cache-dir` | Dependency cache directory | `/var/lib/wsd/cache` |
 | `--state-file` | Workspace tracking file | `/var/lib/wsd/state.json` |
@@ -674,7 +681,7 @@ DHCP, default release, no fixed IP:
 
 ```sh
 MCWSD_TOKEN="$(openssl rand -hex 16)" \
-mcwsd daemon --runtime jail --freebsd-release 15.1-RELEASE \
+mcwsd daemon --plugin plugins/freebsd-jail.js --freebsd-release 15.1-RELEASE \
  --workspace-base-path /home/wsd --cache-dir /var/lib/wsd/cache  \
  --state-file /var/lib/wsd/state.json --port 9080
 ```
@@ -701,7 +708,7 @@ rcvar="mcwsd_enable"
 load_rc_config $name
 
 : ${wsd_enable:="NO"}
-: ${wsd_flags:="-runtime jail -freebsd-release 15.1-RELEASE -workspace-base-path /usr/local/wsd/workspaces -cache-dir /var/lib/wsd/cache -state-file /var/lib/wsd/state.json -port 9080"}
+: ${wsd_flags:="-plugin /usr/local/lib/mcwsd/plugins/freebsd-jail.js -freebsd-release 15.1-RELEASE -workspace-base-path /usr/local/wsd/workspaces -cache-dir /var/lib/wsd/cache -state-file /var/lib/wsd/state.json -port 9080"}
 
 command="/usr/local/bin/mcwsd"
 pidfile="/var/run/${name}.pid"
@@ -777,7 +784,7 @@ mcwsd cleanup --orphans                # remove jails left by a previous crashed
 2026-09-30T18:20:57-06:00 [DEBUG]
 
 ```sh
-mcwsd daemon --runtime jail ... 2>&1 | grep -v '\[DEBUG\]'
+mcwsd daemon --plugin plugins/freebsd-jail.js ... 2>&1 | grep -v '\[DEBUG\]'
 ```
 
 ---
@@ -996,7 +1003,7 @@ command_args="-f -p ${pidfile} -o /var/log/${name}.log /usr/local/bin/mcwsd daem
 command_args="${command_args} --port ${mcwsd_port}"
 command_args="${command_args} --workspace-base-path ${mcwsd_workspace_base_path}"
 command_args="${command_args} --cache-dir ${mcwsd_cache_dir}"
-command_args="${command_args} --runtime ${mcwsd_runtime}"
+command_args="${command_args} --plugin=${mcwsd_plugin}"
 command_args="${command_args} --state-file ${mcwsd_state_file}"
 command_args="${command_args} --forge-type=${mcwsd_forge_type}"
 command_args="${command_args} --github-token-env-var=GITHUB_TOKEN"

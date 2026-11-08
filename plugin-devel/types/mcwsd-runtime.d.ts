@@ -54,8 +54,23 @@ export interface Host {
   /** Resolved plugin options (from --help flags), keyed by flag name. */
   options: Record<string, unknown>;
   ipam: HostIPAM;
-  /** Download a URL to a scratch file, returning its absolute path. */
-  fetch(url: string, opts?: { sha256?: string }): string;
+  /** Download a URL to a scratch file, returning its absolute path.
+   *  opts may carry sha256 (verify digest), username/password_env (HTTP Basic),
+   *  header/header_env (custom auth header), and public_key (verify the
+   *  detached OpenPGP signature at url+".sig"). Credentials are referenced by
+   *  environment-variable name, never embedded. */
+  fetch(
+    url: string,
+    opts?: {
+      sha256?: string;
+      username?: string;
+      password_env?: string;
+      header?: string;
+      header_env?: string;
+      public_key?: string;
+      timeout_seconds?: number;
+    },
+  ): string;
   /** File I/O confined to a per-call scratch root (never the host root). */
   fs: HostFS;
 }
