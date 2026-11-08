@@ -6,9 +6,9 @@ execution runtime — podman, docker, FreeBSD jails, OpenBSD vmd, illumos zones,
 Kubernetes, and anything else. It runs inside the daemon in a `goja` VM and is
 given a small, reviewable host API instead of raw access to the machine.
 
-The native Go backends in `internal/backend/*` are being ported to these
-plugins one at a time; `podman`, `docker`, `kubernetes`, `openbsd-vmd`, and
-`freebsd-jail` are already available as reference ports in `plugins/`.
+The native Go backends in `internal/backend/*` have been ported to these
+plugins one at a time; `podman`, `docker`, `kubernetes`, `openbsd-vmd`,
+`freebsd-jail`, and `zones` are all available in `plugins/`.
 
 ## One plugin per daemon instance
 
@@ -83,6 +83,12 @@ stream stdin (tar, `cat > "$1"`); `opts.root` is true when core is doing its
 own privileged file I/O (ReadFile/WriteFile/CopyDirIn). It must be pure — no
 `host.run`, no `host.sleep` — and is invoked on the hot path, so it lives in a
 long-lived VM.
+
+It may return either a plain argv array or `{ argv, stdin }`. The object form
+exists for runtimes whose transport mangles argv (e.g. zlogin's `su -c`
+re-parsing), so the command script is streamed on stdin to `sh -s` instead of
+embedded in argv; when set, that stdin overrides the data stdin core would
+otherwise stream.
 
 Core owns the generic implementations of `ReadFile` (`cat`), `WriteFile`
 (`cat > "$1"` over stdin), `CopyDirIn` (host `tar` streamed to `tar -xf -`) and
@@ -185,8 +191,8 @@ to the plugin's vitest suite as each runtime is migrated.
 - `plugins/kubernetes.js` — `plugins/kubernetes/plugin.ts` (demonstrates `init`, `recover`, a poll-based `provision`, and shell-quoted `execArgs` through `kubectl exec ... -- sh -c`).
 - `plugins/openbsd-vmd.js` — `plugins/openbsd-vmd/plugin.ts` (a VM runtime: SSH transport via `execArgs`, a three-stage readiness poll, host/guest escalation, and a per-handle `os` override).
 - `plugins/freebsd-jail.js` — `plugins/freebsd-jail/plugin.ts` (a jail runtime: `jexec` transport, shared/VNET networking, the reserved `ip-base-network`/`ip-pool-size` pool, `base.txz` + template download via `host.fetch` with Basic/header auth and OpenPGP signature verification).
+- `plugins/zones.js` — `plugins/zones/plugin.ts` (an illumos zone runtime: `zlogin` transport that streams commands to `sh -s` via the `{argv, stdin}` execArgs form, shared/exclusive networking, VNIC management, and the reserved `ip-base-network`/`ip-pool-size` pool).
 
-The remaining runtime (illumos zones) is the natural next port; its
-`build*Args` functions in `internal/backend/*/transport.go` map directly onto
-`execArgs`, and its provisioner onto `provision`/`destroy` plus
-`host.run`/`host.fetch`/`host.ipam`.
+All runtimes have been ported to plugins; the native Go provisioners that
+remain (`docker`, `podman`, `kubernetes`) are themselves thin and can be
+treated as reference implementations of the same contract.

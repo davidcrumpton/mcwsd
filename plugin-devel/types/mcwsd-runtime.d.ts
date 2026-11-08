@@ -137,8 +137,16 @@ export interface RuntimePlugin {
   recover?(nativeID: string, workDir: string): Handle;
   cleanupOrphans?(keep: string[]): number;
 
-  /** Map (handle, cmd, workDir, env) to the host argv that runs cmd. Pure. */
-  execArgs(handle: Handle, cmd: string[], workDir: string, env: string[], opts: ExecArgsOptions): string[];
+  /** Map (handle, cmd, workDir, env) to the host argv that runs cmd. Pure.
+   *  May instead return { argv, stdin } to stream the command script on stdin
+   *  (used by runtimes whose transport mangles argv, e.g. zlogin `sh -s`). */
+  execArgs(
+    handle: Handle,
+    cmd: string[],
+    workDir: string,
+    env: string[],
+    opts: ExecArgsOptions,
+  ): string[] | { argv: string[]; stdin?: string };
   /** Toggle network access. May use host.run (this is a lifecycle function,
    *  not a pure argv mapping) so it can tolerate idempotency quirks. */
   setNetwork?(handle: Handle, enabled: boolean): void;

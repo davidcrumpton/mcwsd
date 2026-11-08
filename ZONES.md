@@ -1,17 +1,18 @@
 # OpenIndiana / illumos Zones runtime setup
 
 This document describes how to configure an OpenIndiana (or other illumos)
-host so that `mcwsd` can provision workspaces as native zones
-(`--runtime zones`). It covers the required ZFS layout, zone brands, the
-network models, privilege escalation with `pfexec`, running the daemon, and
-troubleshooting.
+host so that `mcwsd` can provision workspaces as native zones. The zones
+runtime is shipped as a script plugin (`plugins/zones.js`); run the daemon with
+`--plugin /usr/local/lib/mcwsd/plugins/zones.js`. It covers the required ZFS
+layout, zone brands, the network models, privilege escalation with `pfexec`,
+running the daemon, and troubleshooting.
 
 The FreeBSD jail runtime is the reference implementation;
 [FREEBSD-SETUP.md](FREEBSD-SETUP.md) describes its host setup.
 
-> **Status:** the `zones` runtime is implemented (`--runtime zones`, alias
-> `--runtime openindiana`). Flags use the `--zones-` prefix so the same runtime
-> can serve OpenIndiana, OmniOS, SmartOS, and other illumos distributions.
+> **Status:** the `zones` runtime is implemented as the `plugins/zones.js`
+> plugin. Flags use the `--zones-` prefix so the same runtime can serve
+> OpenIndiana, OmniOS, SmartOS, and other illumos distributions.
 
 ---
 
@@ -276,7 +277,7 @@ the same TCP/UDP port. This is convenient for a single workspace per host but
 not for many concurrent zones.
 
 ```sh
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
@@ -292,7 +293,7 @@ unused address on the same subnet instead (see below).
 Give each zone its own unused IPv4 address on the same LAN as the global zone:
 
 ```sh
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
@@ -322,7 +323,7 @@ Exclusive-IP gives the zone its own stack. The daemon creates a VNIC from the
 uplink and delegates it to the zone; the zone runs a DHCP client on it.
 
 ```sh
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode exclusive \
   --zones-interface e1000g0 \
@@ -364,7 +365,7 @@ Pass an address and router; the daemon configures the zone's interface after
 boot:
 
 ```sh
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode exclusive \
   --zones-interface e1000g0 \
@@ -389,15 +390,15 @@ other zone.
 
 For a shared-IP or exclusive-IP static deployment, the daemon can allocate
 addresses from a pool, mirroring the FreeBSD runtime's
-`--freebsd-ip-base-network` / `--freebsd-ip-pool-size`:
+`--ip-base-network` / `--ip-pool-size`:
 
 ```sh
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
-  --zones-ip-base-network 192.168.1.200/24 \
-  --zones-ip-pool-size 50 \
+  --ip-base-network 192.168.1.200/24 \
+  --ip-pool-size 50 \
   --zones-defrouter 192.168.1.1 \
   --zones-dns-servers 192.168.1.1 \
   --port 9080
@@ -472,11 +473,11 @@ go build -o /usr/local/bin/mcwsd cmd/mcwsd/main.go
 
 ### `--zones-*` flags
 
-These mirror the FreeBSD jail flags.
+These mirror the FreeBSD jail plugin flags.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--runtime` | `zones` (alias `openindiana`) for the Zones runtime | `docker` |
+| `--plugin` | Path to the zones plugin (e.g. `plugins/zones.js`) | *(required)* |
 | `--zones-zonepath` | Parent ZFS dataset for zone roots | *(required)* |
 | `--zones-brand` | Zone brand; `ipkg` is the documented brand | `ipkg` |
 | `--zones-base-zone` | Installed, halted golden zone to clone instead of `zoneadm install` | *(empty)* |
@@ -484,8 +485,8 @@ These mirror the FreeBSD jail flags.
 | `--zones-interface` | Global-zone data link (shared) or VNIC uplink (exclusive) | *(empty)* |
 | `--zones-ip-address` | Shared: IPv4/prefix. Exclusive: static IPv4/prefix, empty for DHCP | *(empty)* |
 | `--zones-defrouter` | Default router | *(empty)* |
-| `--zones-ip-base-network` | CIDR pool for automatic address allocation | *(empty)* |
-| `--zones-ip-pool-size` | Number of addresses to allocate | `0` |
+| `--ip-base-network` | CIDR pool for automatic address allocation | *(empty)* |
+| `--ip-pool-size` | Number of addresses to allocate | `0` |
 | `--zones-dns-servers` | Comma-separated DNS server IPs; default is the host resolver | *(empty)* |
 | `--zones-escalation` | Privilege escalation command: `pfexec`, `sudo`, `doas`, or empty | `pfexec` |
 | `--zones-boot-timeout` | How long to wait for a booted zone to accept `zlogin` | `5m` |
@@ -502,12 +503,12 @@ These mirror the FreeBSD jail flags.
 
 ```sh
 MCWSD_TOKEN="$(openssl rand -hex 16)" \
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
-  --zones-ip-base-network 192.168.1.200/24 \
-  --zones-ip-pool-size 50 \
+  --ip-base-network 192.168.1.200/24 \
+  --ip-pool-size 50 \
   --zones-defrouter 192.168.1.1 \
   --zones-dns-servers 192.168.1.1 \
   --zones-escalation pfexec \
@@ -520,7 +521,7 @@ mcwsd daemon --runtime zones \
 ### Example: golden zone and exclusive-IP DHCP
 
 ```sh
-mcwsd daemon --runtime zones \
+mcwsd daemon --plugin plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-base-zone wsd-golden \
   --zones-network-mode exclusive \
@@ -545,12 +546,12 @@ set -a
 [ -f /etc/mcwsd/env ] && . /etc/mcwsd/env
 set +a
 exec /usr/local/bin/mcwsd daemon \
-  --runtime zones \
+  --plugin /usr/local/lib/mcwsd/plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
-  --zones-ip-base-network 192.168.1.200/24 \
-  --zones-ip-pool-size 50 \
+  --ip-base-network 192.168.1.200/24 \
+  --ip-pool-size 50 \
   --zones-defrouter 192.168.1.1 \
   --zones-dns-servers 192.168.1.1 \
   --zones-escalation pfexec \
@@ -650,9 +651,9 @@ running zone. Halt first.
 Daemon housekeeping:
 
 ```sh
-mcwsd cleanup --runtime zones --zones-zonepath /rpool1/zones \
+mcwsd cleanup --plugin plugins/zones.js --zones-zonepath /rpool1/zones \
   --zones-network-mode shared --zones-escalation pfexec --prune
-mcwsd cleanup --runtime zones --zones-zonepath /rpool1/zones \
+mcwsd cleanup --plugin plugins/zones.js --zones-zonepath /rpool1/zones \
   --zones-base-zone wsd-golden \
   --zones-network-mode shared --zones-escalation pfexec --orphans
 ```
@@ -660,7 +661,7 @@ mcwsd cleanup --runtime zones --zones-zonepath /rpool1/zones \
 ### Debug logging
 
 ```sh
-mcwsd daemon --runtime zones ... --debug 2>&1 | grep -v '\[DEBUG\]'
+mcwsd daemon --plugin plugins/zones.js ... --debug 2>&1 | grep -v '\[DEBUG\]'
 ```
 
 ---

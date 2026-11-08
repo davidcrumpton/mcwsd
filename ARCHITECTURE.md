@@ -24,10 +24,9 @@ type Provisioner interface {
 ```
 
 Implementations: `docker.DockerProvisioner` (Docker Engine API),
-`podman.PodmanProvisioner` (Podman CLI), `zones.ZonesProvisioner`
-(OpenIndiana/illumos zones), `kubernetes.KubernetesProvisioner` (Kubernetes
-pods), plus goja-backed script plugins (`script.Provisioner`) for `podman`,
-`docker`, `kubernetes`, `openbsd-vmd`, and `freebsd-jail`.
+`podman.PodmanProvisioner` (Podman CLI), `kubernetes.KubernetesProvisioner`
+(Kubernetes pods), plus goja-backed script plugins (`script.Provisioner`) for
+`podman`, `docker`, `kubernetes`, `openbsd-vmd`, `freebsd-jail`, and `zones`.
 
 Optional interfaces a Provisioner may implement:
 - `Validator` — host/runtime configuration validation
@@ -51,10 +50,10 @@ type ExecTransport interface {
 ```
 
 Implementations: `docker.DockerExecTransport` (Docker Engine API),
-`podman.PodmanExecTransport` (Podman CLI), `zones.ZonesExecTransport` (zlogin),
+`podman.PodmanExecTransport` (Podman CLI),
 `kubernetes.KubectlExecTransport` (kubectl exec), and the script
 `ExecTransport` (ssh(1) for the openbsd-vmd plugin, jexec(8) for the
-freebsd-jail plugin).
+freebsd-jail plugin, zlogin(1) for the zones plugin).
 
 Optional interfaces an ExecTransport may implement:
 - `Bootstrapper` — one-time base setup inside a freshly provisioned runtime
@@ -142,10 +141,9 @@ identity/commit/bundle steps, secret grant/revoke, state-file bookkeeping —
 is orchestration. It lives in the workspace backend (`backend.Backend`)
 and is written entirely against the `Provisioner` / `ExecTransport`
 / `Forge` interfaces, not against any runtime-specific types. The backend
-holds a single `runtime.Provisioner` (Docker, Podman,
-OpenIndiana/illumos zones, Kubernetes, or a script plugin such as openbsd-vmd
-or freebsd-jail) and orchestrates it identically
-regardless of which one is in play.
+holds a single `runtime.Provisioner` (Docker, Podman, Kubernetes, or a script
+plugin such as openbsd-vmd, freebsd-jail, or zones) and orchestrates it
+identically regardless of which one is in play.
 
 ## ProvisionSpec (`internal/runtime`)
 

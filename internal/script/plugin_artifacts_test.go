@@ -3,6 +3,7 @@ package script
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestDeployedPodmanPlugin(t *testing.T) {
 	}
 
 	tr := r.newTransport("abc", map[string]interface{}{"native_id": "abc"})
-	argv, err := tr.execArgs([]string{"true"}, "/w", nil, false, false)
+	argv, _, err := tr.execArgs([]string{"true"}, "/w", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestDeployedDockerPluginOptions(t *testing.T) {
 	}
 
 	tr := r.newTransport("abc", map[string]interface{}{"native_id": "abc"})
-	argv, err := tr.execArgs([]string{"true"}, "/w", nil, false, false)
+	argv, _, err := tr.execArgs([]string{"true"}, "/w", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestDeployedOpenBSDVMDPlugin(t *testing.T) {
 		"key_path":  "/var/wsd/agent_ed25519",
 		"escalation": "",
 	})
-	argv, err := tr.execArgs([]string{"echo", "hi"}, "/workspace/repo", nil, false, false)
+	argv, _, err := tr.execArgs([]string{"echo", "hi"}, "/workspace/repo", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestDeployedKubernetesPlugin(t *testing.T) {
 	}
 
 	tr := r.newTransport("wsd-ws", map[string]interface{}{"native_id": "wsd-ws"})
-	argv, err := tr.execArgs([]string{"true"}, "/w", nil, false, false)
+	argv, _, err := tr.execArgs([]string{"true"}, "/w", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestDeployedKubernetesPlugin(t *testing.T) {
 
 	// The shell-quoting quirk: workdir/env/args with spaces and semicolons must
 	// be rendered as a single sh -c payload, not spliced into host argv.
-	argv, err = tr.execArgs([]string{"printf", "%s", "a b;c"}, "/w rk dir", []string{"V=v w"}, false, false)
+	argv, _, err = tr.execArgs([]string{"printf", "%s", "a b;c"}, "/w rk dir", []string{"V=v w"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func TestDeployedFreeBSDJailPlugin(t *testing.T) {
 	}
 
 	tr := r.newTransport("wsd-ws", map[string]interface{}{"native_id": "wsd-ws"})
-	argv, err := tr.execArgs([]string{"echo", "hi"}, "/w", []string{"A=1"}, false, false)
+	argv, _, err := tr.execArgs([]string{"echo", "hi"}, "/w", []string{"A=1"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,5 +258,86 @@ func TestDeployedFreeBSDJailPlugin(t *testing.T) {
 		if argv[i] != want[i] {
 			t.Fatalf("argv[%d] = %q, want %q", i, argv[i], want[i])
 		}
+	}
+}
+
+func TestDeployedZonesPlugin(t *testing.T) {
+	r := deployedPlugin(t, "zones")
+	if r.Name != "zones" || r.OS != "illumos" || r.Isolation != "zone" {
+		t.Fatalf("metadata = %q/%q/%q", r.Name, r.OS, r.Isolation)
+	}
+	for _, b := range []string{"zoneadm", "zonecfg", "zlogin", "zfs", "dladm", "ipadm", "pfexec"} {
+		if !r.binaries[b] {
+			t.Fatalf("%s binary not allowed: %v", b, r.binaries)
+		}
+	}
+
+	byFlag := make(map[string]Option, len(r.Options))
+	for _, o := range r.Options {
+		byFlag[o.Flag] = o
+	}
+	if byFlag["zones-zonepath"].Type != "string" {
+		t.Fatalf("zones-zonepath option = %+v", byFlag["zones-zonepath"])
+	}
+	if byFlag["ip-base-network"].Type != "string" {
+		t.Fatalf("ip-base-network option = %+v", byFlag["ip-base-network"])
+	}
+	if byFlag["ip-pool-size"].Type != "int" || byFlag["ip-pool-size"].Default != "0" {
+		t.Fatalf("ip-pool-size option = %+v", byFlag["ip-pool-size"])
+	}
+	if byFlag["zones-escalation"].Type != "string" || byFlag["zones-escalation"].Default != "pfexec" {
+		t.Fatalf("zones-escalation option = %+v", byFlag["zones-escalation"])
+	}
+
+	// The transport VM's host only exposes options; bind the escalator so the
+	// execArgs mapping resolves it.
+	if err := r.bindTransportOptions(map[string]interface{}{
+		"zones-escalation": "pfexec",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tr := r.newTransport("wsd-ws", map[string]interface{}{"native_id": "wsd-ws", "vnic": ""})
+
+	// A plain exec streams the command script to `zlogin <zone> sh -s` on stdin.
+	argv, stdin, err := tr.execArgs([]string{"git", "status"}, "/workspace/repo", []string{"FOO=bar"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pfexec", "zlogin", "wsd-ws", "sh", "-s"}
+	if len(argv) != len(want) {
+		t.Fatalf("argv = %v, want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q", i, argv[i], want[i])
+		}
+	}
+	if stdin == nil {
+		t.Fatal("execArgs returned no stdin payload for the zlogin sh -s form")
+	}
+	const zonesPath = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin"
+	for _, sub := range []string{"cd /workspace/repo &&", "env PATH=" + zonesPath, "FOO=bar", "git status"} {
+		if !strings.Contains(*stdin, sub) {
+			t.Fatalf("stdin payload missing %q: %q", sub, *stdin)
+		}
+	}
+
+	// WriteFile maps to `zlogin <zone> tee <path>`; CopyDirIn maps to tar.
+	argv, stdin, err = tr.execArgs([]string{"sh", "-c", `cat > "$1"`, "sh", "/w/file"}, "", nil, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []string{"pfexec", "zlogin", "wsd-ws", "tee", "/w/file"}
+	if len(argv) != len(want) {
+		t.Fatalf("write argv = %v, want %v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("write argv[%d] = %q, want %q", i, argv[i], want[i])
+		}
+	}
+	if stdin != nil {
+		t.Fatalf("write execArgs returned an unexpected stdin payload: %q", *stdin)
 	}
 }

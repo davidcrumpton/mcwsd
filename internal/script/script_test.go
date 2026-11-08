@@ -90,7 +90,7 @@ func TestBindFlagsAndValues(t *testing.T) {
 func TestExecArgsMapping(t *testing.T) {
 	r := loadTestRuntime(t)
 	tr := r.newTransport("wsd-abc", map[string]interface{}{"native_id": "wsd-abc"})
-	argv, err := tr.execArgs([]string{"ls", "/"}, "/w", nil, false, false)
+	argv, _, err := tr.execArgs([]string{"ls", "/"}, "/w", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestExecArgsMapping(t *testing.T) {
 func TestExecArgsStdinFlag(t *testing.T) {
 	r := loadTestRuntime(t)
 	tr := r.newTransport("wsd-abc", map[string]interface{}{"native_id": "wsd-abc"})
-	argv, err := tr.execArgs([]string{"cat"}, "", nil, true, true)
+	argv, _, err := tr.execArgs([]string{"cat"}, "", nil, true, true)
 	if err != nil {
 		t.Fatal(err)
 	}

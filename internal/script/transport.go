@@ -43,7 +43,19 @@ var (
 // for its own privileged file I/O (ReadFile/WriteFile/CopyDirIn) and false for
 // user Exec, so a plugin can run file operations as root while leaving user
 // commands at the image's default user.
-func (t *ExecTransport) execArgs(cmd []string, workDir string, env []string, stdin, root bool) ([]string, error) {
+// execArgs invokes the plugin's execArgs(handle, cmd, workDir, env, opts) and
+// returns the resulting argv plus an optional stdin payload. opts carries
+// {stdin, root}: core sets root=true for its own privileged file I/O
+// (ReadFile/WriteFile/CopyDirIn) and false for user Exec, so a plugin can run
+// file operations as root while leaving user commands at the image's default
+// user.
+//
+// A plugin may return either a plain argv array or {argv, stdin}; the stdin
+// form exists for runtimes that stream the command script on stdin rather than
+// embedding it in argv (e.g. zlogin's `sh -s`, which avoids su -c argument
+// mangling). When the plugin supplies a stdin payload it overrides the data
+// stdin core would otherwise stream.
+func (t *ExecTransport) execArgs(cmd []string, workDir string, env []string, stdin, root bool) ([]string, *string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	vm := t.runtime.transport.vm
@@ -55,19 +67,46 @@ func (t *ExecTransport) execArgs(cmd []string, workDir string, env []string, std
 		vm.ToValue(map[string]interface{}{"stdin": stdin, "root": root}),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("execArgs: %w", err)
+		return nil, nil, fmt.Errorf("execArgs: %w", err)
 	}
-	return argvFromJS(out)
+	return argvResultFromJS(out)
 }
 
 func argvFromJS(val goja.Value) ([]string, error) {
+	argv, _, err := argvResultFromJS(val)
+	return argv, err
+}
+
+// argvResultFromJS converts an execArgs return value into an argv and an
+// optional stdin payload. The plain array form (no stdin) is used by argv-only
+// runtimes; the {argv, stdin} object form is used by stdin-streaming runtimes.
+func argvResultFromJS(val goja.Value) ([]string, *string, error) {
 	if val == nil || goja.IsUndefined(val) || goja.IsNull(val) {
-		return nil, fmt.Errorf("execArgs must return an argv array")
+		return nil, nil, fmt.Errorf("execArgs must return an argv array or {argv, stdin}")
 	}
-	raw, ok := val.Export().([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("execArgs must return an array of strings")
+	if raw, ok := val.Export().([]interface{}); ok {
+		argv, err := argvSlice(raw)
+		return argv, nil, err
 	}
+	if m, ok := val.Export().(map[string]interface{}); ok {
+		raw, ok := m["argv"].([]interface{})
+		if !ok {
+			return nil, nil, fmt.Errorf("execArgs object form must include an argv array")
+		}
+		argv, err := argvSlice(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		var stdin *string
+		if s, ok := m["stdin"].(string); ok {
+			stdin = &s
+		}
+		return argv, stdin, nil
+	}
+	return nil, nil, fmt.Errorf("execArgs must return an array of strings or {argv, stdin}")
+}
+
+func argvSlice(raw []interface{}) ([]string, error) {
 	argv := make([]string, 0, len(raw))
 	for _, e := range raw {
 		s, ok := e.(string)
@@ -82,7 +121,7 @@ func argvFromJS(val goja.Value) ([]string, error) {
 // run executes a command inside the runtime via execArgs, returning the raw
 // host result. root selects whether core runs it as a privileged file op.
 func (t *ExecTransport) run(ctx context.Context, cmd []string, workDir string, env []string, stdin []byte, root bool) (hostResult, error) {
-	argv, err := t.execArgs(cmd, workDir, env, stdin != nil, root)
+	argv, cmdStdin, err := t.execArgs(cmd, workDir, env, stdin != nil, root)
 	if err != nil {
 		return hostResult{}, err
 	}
@@ -91,7 +130,9 @@ func (t *ExecTransport) run(ctx context.Context, cmd []string, workDir string, e
 	// typed nil would let the childStdin goroutine call WriteTo on a nil
 	// *bytes.Reader and panic on the first stdin-less Exec.
 	var in io.Reader
-	if stdin != nil {
+	if cmdStdin != nil {
+		in = strings.NewReader(*cmdStdin)
+	} else if stdin != nil {
 		in = bytes.NewReader(stdin)
 	}
 	return runHostCommand(ctx, argv, in, t.runtime.binaries)
@@ -146,7 +187,7 @@ func (t *ExecTransport) CopyDirIn(ctx context.Context, hostSrcDir, destPath stri
 	}
 	defer f.Close()
 
-	argv, err := t.execArgs([]string{"tar", "-xf", "-", "-C", destPath}, "", nil, true, true)
+	argv, _, err := t.execArgs([]string{"tar", "-xf", "-", "-C", destPath}, "", nil, true, true)
 	if err != nil {
 		return err
 	}

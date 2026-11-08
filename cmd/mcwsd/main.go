@@ -22,7 +22,6 @@ import (
 	"github.com/davidcrumpton/mcwsd/internal/backend/docker"
 	"github.com/davidcrumpton/mcwsd/internal/backend/kubernetes"
 	"github.com/davidcrumpton/mcwsd/internal/backend/podman"
-	"github.com/davidcrumpton/mcwsd/internal/backend/zones"
 	"github.com/davidcrumpton/mcwsd/internal/capacity"
 	"github.com/davidcrumpton/mcwsd/internal/gitpush"
 	"github.com/davidcrumpton/mcwsd/internal/jobs"
@@ -127,10 +126,6 @@ func newDaemonCmd() *cobra.Command {
 	var (
 		runtimeFlag string
 		pluginFlag  string
-
-		// illumos / OpenIndiana zones (runtime=zones|openindiana only)
-		zonesOpts       zones.Options
-		zonesDNSServers string
 	)
 
 	// ---- backend / daemon flags ----
@@ -201,17 +196,15 @@ serves the workspace API, and cleans up stale workspaces periodically.
 
 Flags are grouped into three concerns:
 
-	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes, zones)
+	Provisioner  -- which runtime backs workspaces (docker, podman, kubernetes)
   Backend      -- daemon lifecycle, networking, cache, capacity gating
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
-			zonesOpts.DNSServers = splitCommaList(zonesDNSServers)
 			return runDaemon(
 				runtimeFlag,
-				zonesOpts,
 				provisioningHintsFile, workspaceBasePath, bindAddress, port, cacheDir, maxCacheGB,
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
 				tlsCertFile, tlsKeyFile,
@@ -240,36 +233,8 @@ Flags are grouped into three concerns:
 	f := cmd.Flags()
 
 	// -- Provisioner --
-	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, kubernetes, or zones/openindiana (illumos); Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
+	f.StringVar(&runtimeFlag, "runtime", "default", "Workspace provisioner: docker, podman, or kubernetes; Kubernetes uses KUBECONFIG and MCWSD_KUBERNETES_NAMESPACE")
 	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript); overrides --runtime. One plugin per daemon instance — run separate instances for separate runtimes.")
-
-	// illumos / OpenIndiana zones (zones runtime only). The zonepath parent
-	// must already be a ZFS dataset; mcwsd creates per-zone datasets with
-	// zoneadm but never creates the pool or the parent.
-	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
-		"Parent ZFS dataset for workspace zone roots, e.g. /rpool1/zones (zones runtime only)")
-	f.StringVar(&zonesOpts.Brand, "zones-brand", "ipkg",
-		"Zone brand used by zoneadm install (zones runtime only)")
-	f.StringVar(&zonesOpts.BaseZone, "zones-base-zone", "",
-		"Installed, halted golden zone cloned for each workspace; empty uses zoneadm install (zones runtime only)")
-	f.StringVar(&zonesOpts.NetworkMode, "zones-network-mode", "shared",
-		"Zone network mode: shared or exclusive (zones runtime only)")
-	f.StringVar(&zonesOpts.Interface, "zones-interface", "",
-		"Global-zone data link for shared-IP zones, or the VNIC uplink for exclusive-IP zones (zones runtime only)")
-	f.StringVar(&zonesOpts.IPAddress, "zones-ip-address", "",
-		"Shared-IP address, or exclusive-IP static address/prefix; empty uses the global address (shared) or DHCP (exclusive) (zones runtime only)")
-	f.StringVar(&zonesOpts.DefRouter, "zones-defrouter", "",
-		"Default router for static zone addressing (zones runtime only)")
-	f.StringVar(&zonesOpts.IPBaseNetwork, "zones-ip-base-network", "",
-		"Base network in CIDR notation for automatic address allocation, e.g. 192.168.1.200/24 (zones runtime only)")
-	f.IntVar(&zonesOpts.IPPoolSize, "zones-ip-pool-size", 0,
-		"Number of addresses to allocate from --zones-ip-base-network (zones runtime only)")
-	f.StringVar(&zonesDNSServers, "zones-dns-servers", "",
-		"Comma-separated DNS server IPs for zones; defaults to the global zone resolver (zones runtime only)")
-	f.StringVar(&zonesOpts.Escalation, "zones-escalation", "pfexec",
-		"Privilege escalation command for zonecfg/zoneadm/zlogin/dladm: pfexec, sudo, doas, or empty to run directly (zones runtime only)")
-	f.DurationVar(&zonesOpts.BootTimeout, "zones-boot-timeout", 5*time.Minute,
-		"How long to wait for a freshly booted zone to accept zlogin (zones runtime only)")
 
 	// -- Backend --
 	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", "/etc/wsd/provisioning_hints.json",
@@ -391,7 +356,6 @@ Flags are grouped into three concerns:
 
 func runDaemon(
 	runtimeFlag string,
-	zonesOpts zones.Options,
 	provisioningHintsFile, workspaceBasePath string,
 	bindAddress string, port int, cacheDir string, maxCacheGB int,
 	stateFile string, workspaceTTL, pruneInterval time.Duration, pruneOnStartup bool,
@@ -493,10 +457,7 @@ func runDaemon(
 	}
 
 	// Create provisioner
-	provisioner, err := buildProvisioner(
-		runtimeFlag,
-		zonesOpts,
-	)
+	provisioner, err := buildProvisioner(runtimeFlag)
 	if err != nil {
 		return err
 	}
@@ -516,9 +477,6 @@ func runDaemon(
 		return fmt.Errorf("provisioner initialization failed (runtime=%s): %w", runtimeFlag, err)
 	}
 	internal.Log.Info("provisioner_initialized", "runtime", runtimeFlag)
-	if runtimeFlag == "zones" || runtimeFlag == "openindiana" {
-		internal.Log.Info("zones_network_mode", "mode", zonesOpts.NetworkMode, "zonepath", zonesOpts.ZonePath)
-	}
 
 	// Load administrator-authored environment hints, if any. A missing file is
 	// not an error; a malformed one is, so a typo surfaces at startup.
@@ -691,7 +649,6 @@ func newCleanupCmd() *cobra.Command {
 		doPrune      bool
 		workspaceTTL time.Duration
 		jobRetention time.Duration
-		zonesOpts    zones.Options
 	)
 
 	cmd := &cobra.Command{
@@ -710,7 +667,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
-			return runCleanup(stateFile, jobsFile, runtimeFlag, workspaceTTL, jobRetention, doOrphans, doPrune, zonesOpts)
+			return runCleanup(stateFile, jobsFile, runtimeFlag, workspaceTTL, jobRetention, doOrphans, doPrune)
 		},
 	}
 
@@ -722,17 +679,9 @@ Both flags may be combined. Neither requires forge configuration.`,
 	f.DurationVar(&jobRetention, "job-retention", 24*time.Hour,
 		"Remove finished job records older than this")
 	f.StringVar(&runtimeFlag, "runtime", "docker",
-		"Workspace provisioner used when the state file was written: docker, podman, kubernetes, or zones/openindiana")
+		"Workspace provisioner used when the state file was written: docker, podman, or kubernetes")
 	f.StringVar(&pluginFlag, "plugin", "",
 		"Path to a single .js runtime plugin used when the state file was written (overrides --runtime)")
-	f.StringVar(&zonesOpts.ZonePath, "zones-zonepath", "",
-		"Parent ZFS dataset for workspace zones (zones runtime only; needed for orphan resource cleanup)")
-	f.StringVar(&zonesOpts.NetworkMode, "zones-network-mode", "shared",
-		"Zone network mode used when the state file was written: shared or exclusive (zones runtime only)")
-	f.StringVar(&zonesOpts.BaseZone, "zones-base-zone", "",
-		"Golden zone to preserve during orphan cleanup (zones runtime only)")
-	f.StringVar(&zonesOpts.Escalation, "zones-escalation", "pfexec",
-		"Privilege escalation command for zoneadm/zonecfg/dladm (zones runtime only)")
 	f.BoolVar(&doOrphans, "orphans", false,
 		"Force-remove workspaces left behind by a previous not-cleanly-shut-down daemon run")
 	f.BoolVar(&doPrune, "prune", false,
@@ -747,7 +696,7 @@ Both flags may be combined. Neither requires forge configuration.`,
 	return cmd
 }
 
-func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool, zonesOpts zones.Options) error {
+func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool) error {
 	if !doOrphans && !doPrune {
 		return fmt.Errorf("specify at least one of --orphans or --prune")
 	}
@@ -759,10 +708,7 @@ func runCleanup(stateFile, jobsFile, runtimeFlag string, workspaceTTL, jobRetent
 
 	// Cleanup only needs a minimal provisioner — enough to destroy containers/
 	// jails/VMs — and no forge config at all.
-	provisioner, err := buildProvisioner(
-		runtimeFlag,
-		zonesOpts,
-	)
+	provisioner, err := buildProvisioner(runtimeFlag)
 	if err != nil {
 		return err
 	}
@@ -955,28 +901,9 @@ func loadScriptPlugin(path string, fs *pflag.FlagSet) {
 	scriptPluginOptions = vals
 }
 
-// splitCommaList parses a comma-separated flag value, trimming whitespace and
-// dropping empty entries.
-func splitCommaList(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if part = strings.TrimSpace(part); part != "" {
-			out = append(out, part)
-		}
-	}
-	return out
-}
-
 // buildProvisioner constructs the appropriate runtime.Provisioner from flags.
 // It is called by both the daemon and cleanup subcommands.
-func buildProvisioner(
-	runtimeFlag string,
-	zonesOpts zones.Options,
-) (runtime.Provisioner, error) {
+func buildProvisioner(runtimeFlag string) (runtime.Provisioner, error) {
 	if scriptPluginRuntime != nil {
 		if scriptPluginOptions == nil {
 			return nil, fmt.Errorf("runtime plugin loaded but its options were not bound")
@@ -993,9 +920,6 @@ func buildProvisioner(
 			namespace = "default"
 		}
 		return kubernetes.NewKubernetesProvisioner("", namespace), nil
-	case "zones", "openindiana":
-		// illumos / OpenIndiana zones
-		return zones.NewZonesProvisioner(zonesOpts), nil
 	default:
 		// Docker (default)
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
