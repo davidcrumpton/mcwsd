@@ -31,7 +31,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.355"
+	Version         = "0.4.357"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -449,7 +449,29 @@ func runDaemon(
 		// half-configured state that only surfaces three steps into a commit.
 		return fmt.Errorf("invalid git auth config: %w", err)
 	} else {
-		internal.Log.Info("git_auth_configured", "mode", gitAuthMode, "forge_type", gitForgeType)
+		// Mirror Validate's forge-type defaulting so the logged forge and the
+		// selected API base/project path always agree with what will actually
+		// be used for the merge-request call.
+		forge := strings.ToLower(strings.TrimSpace(gitForgeType))
+		if forge == "" {
+			forge = "gitlab"
+		}
+		apiBase, projectPath := "", ""
+		switch forge {
+		case "gitlab":
+			apiBase, projectPath = gitCfg.GitLabAPIBase, gitCfg.GitLabProjectPath
+		case "github":
+			apiBase, projectPath = gitCfg.GitHubAPIBase, gitCfg.GitHubProjectPath
+		case "gitea":
+			apiBase, projectPath = gitCfg.GiteaAPIBase, gitCfg.GiteaProjectPath
+		case "forgejo":
+			apiBase, projectPath = gitCfg.ForgejoAPIBase, gitCfg.ForgejoProjectPath
+		}
+		internal.Log.Info("git_auth_configured",
+			"mode", gitAuthMode,
+			"forge_type", forge,
+			"api_base", apiBase,
+			"project_path", projectPath)
 	}
 
 	// Assemble capacity gating config. Parsing/validation happens here so a
