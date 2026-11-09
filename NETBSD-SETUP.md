@@ -83,7 +83,7 @@ Edit `/usr/pkg/etc/sudoers` with `visudo` (note the pkgsrc path):
 
 ```
 # Up: let the daemon manage accounts only.
-_wsd ALL=(root) NOPASSWD: /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/groupadd, /usr/sbin/groupdel, /usr/sbin/userinfo, /usr/sbin/chown, /bin/rm, /bin/mkdir
+_wsd ALL=(root) NOPASSWD: /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/groupadd, /usr/sbin/groupdel, /usr/sbin/userinfo, /usr/sbin/chown, /bin/rm, /bin/mkdir, /bin/test
 
 # Down: let the daemon run commands as any workspace account (members of wsd).
 _wsd ALL=(%wsd) NOPASSWD: ALL
@@ -140,7 +140,7 @@ workspace account can only use what is already installed on the host. Install
 the toolchains agents need once, as root:
 
 ```sh
-pkg_add git python311 nodejs go rust postgresql16-server
+pkg_add git python3 go rust # your preferred tools but git is required for forge usage
 ```
 
 The agent's system package-manager is reported as `pkg_add`, but as an
