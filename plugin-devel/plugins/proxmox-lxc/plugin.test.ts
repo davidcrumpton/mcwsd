@@ -56,6 +56,19 @@ const defaultOptions: Record<string, unknown> = {
   "proxmox-ssh-probe-timeout": 20,
 };
 
+// vmID mirrors the plugin's deterministic workspaceVMID so tests can assert
+// the exact VMID without duplicating the plugin's hash through a string.
+function vmID(workspaceID: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < workspaceID.length; i++) {
+    h ^= workspaceID.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  return String(100 + (h % 999999900));
+}
+
+const vmid = vmID("ws-abc");
+
 function url(argv: string[]): string {
   return argv[argv.length - 1];
 }
@@ -69,16 +82,15 @@ function apiResponse(argv: string[]): { stdout: string; stderr: string; exit_cod
   const path = url(argv);
   const method = curlMethod(argv);
   const ok = (body: string) => ({ stdout: body, stderr: "", exit_code: 0 });
-  if (path.indexOf("nextid") !== -1) return ok('{"data": 600}');
   if (path.indexOf("/tasks/") !== -1) return ok('{"data":{"status":"stopped","exitstatus":"OK"}}');
-  if (path.indexOf("/lxc/600/status/current") !== -1) return ok('{"data":{"status":"running"}}');
-  if (path.indexOf("/lxc/600/interfaces") !== -1) return ok('{"data":[{"name":"eth0","inet":"192.168.1.99"}]}');
-  if (path.indexOf("/lxc/600/status/stop") !== -1) return ok('{"data":null}');
-  if (path.indexOf("/lxc/600/status/start") !== -1) return ok('{"data":"UPID:pve1:1:1:1:start:600:root@pam:"}');
-  if (path.indexOf("/lxc/600") !== -1) return ok('{"data":null}'); // DELETE
+  if (path.indexOf("/lxc/" + vmid + "/status/current") !== -1) return ok('{"data":{"status":"running"}}');
+  if (path.indexOf("/lxc/" + vmid + "/interfaces") !== -1) return ok('{"data":[{"name":"eth0","inet":"192.168.1.99"}]}');
+  if (path.indexOf("/lxc/" + vmid + "/status/stop") !== -1) return ok('{"data":null}');
+  if (path.indexOf("/lxc/" + vmid + "/status/start") !== -1) return ok('{"data":"UPID:pve1:1:1:1:start:' + vmid + ':root@pam:"}');
+  if (path.indexOf("/lxc/" + vmid) !== -1) return ok('{"data":null}'); // DELETE
   if (path.indexOf("/nodes/pve1/lxc") !== -1) {
-    if (method === "POST") return ok('{"data":"UPID:pve1:00002F9D:000DC5EA:start:600:root@pam:"}');
-    return ok('{"data":[{"vmid":600,"name":"wsd-ws-abc","status":"running","type":"lxc"}]}');
+    if (method === "POST") return ok('{"data":"UPID:pve1:00002F9D:000DC5EA:start:' + vmid + ':root@pam:"}');
+    return ok('{"data":[{"vmid":' + vmid + ',"name":"wsd-ws-abc","status":"running","type":"lxc"}]}');
   }
   if (path.indexOf("/nodes/pve1/status") !== -1) return ok('{"data":{}}');
   return ok("{}");
@@ -196,14 +208,13 @@ describe("proxmox-lxc plugin", () => {
     const create = runs.find((r) => r.argv[0] === "curl" && url(r.argv).indexOf("/nodes/pve1/lxc") !== -1)!;
     expect(create).toBeTruthy();
     const form = formOf(create);
-    expect(form.vmid).toBe("600");
+    expect(form.vmid).toBe(vmid);
     expect(form.hostname).toBe("wsd-ws-abc");
     expect(form.net0).toBe("name=eth0,bridge=vmbr0,ip=dhcp");
     expect(form["ssh-public-keys"]).toContain("ssh-ed25519");
     expect(form.unprivileged).toBe("1");
 
     const joined = runs.map((r) => r.argv.join(" "));
-    expect(joined.some((c) => c.indexOf("nextid") !== -1)).toBe(true);
     expect(joined.some((c) => c.indexOf("/interfaces") !== -1)).toBe(true);
     expect(runs.some((r) => r.argv[0] === "ssh")).toBe(true);
   });
@@ -265,7 +276,7 @@ describe("proxmox-lxc plugin", () => {
     plugin.destroyByID("wsd-ws-abc");
     const joined = runs.map((r) => r.argv.join(" "));
     expect(joined.some((c) => c.indexOf("/status/stop") !== -1)).toBe(true);
-    expect(joined.some((c) => c.indexOf("DELETE") !== -1 && c.indexOf("/lxc/600") !== -1)).toBe(true);
+    expect(joined.some((c) => c.indexOf("DELETE") !== -1 && c.indexOf("/lxc/" + vmid) !== -1)).toBe(true);
     expect(released).toContain("ws-abc");
   });
 

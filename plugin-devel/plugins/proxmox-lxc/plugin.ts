@@ -244,8 +244,9 @@ function apiArgs(method: string, path: string, form: Array<[string, string]>): s
     args.push("-k");
   }
   // Bound every API call so a hung connection cannot block a provision
-  // indefinitely (the daemon-side request may have no deadline).
-  args.push("--connect-timeout", "10", "--max-time", "120");
+  // indefinitely (the daemon-side request may have no deadline). All API
+  // responses are small JSON returned within seconds; 30s is generous.
+  args.push("--connect-timeout", "10", "--max-time", "30");
   if (method !== "GET") {
     args.push("-X", method);
   }
@@ -260,9 +261,15 @@ function apiArgs(method: string, path: string, form: Array<[string, string]>): s
 // apiCall runs an API request and returns the parsed `data` member (or the full
 // body when there is no `data`). HTTP error responses arrive as JSON bodies
 // with an `errors` member and curl still exits 0, so those are checked here.
-function apiCall(method: string, path: string, form: Array<[string, string]>): any {
+// One-shot calls log their method+path and any error; poll loops pass
+// quiet=true to avoid a log line every poll interval.
+function apiCall(method: string, path: string, form: Array<[string, string]>, quiet?: boolean): any {
+  if (!quiet) {
+    logInfo("proxmox-api " + method + " " + path);
+  }
   const res = host.run(apiArgs(method, path, form));
   if (res.exit_code !== 0) {
+    logWarn("proxmox-api " + method + " " + path + " failed (curl exit " + res.exit_code + "): " + str(res.stderr));
     throw new Error("proxmox API " + method + " " + path + " failed (curl exit " + res.exit_code + "): " + str(res.stderr));
   }
   const body = str(res.stdout).trim();
@@ -270,34 +277,46 @@ function apiCall(method: string, path: string, form: Array<[string, string]>): a
   try {
     parsed = JSON.parse(body);
   } catch (e) {
+    logWarn("proxmox-api " + method + " " + path + " returned non-JSON: " + body.slice(0, 200));
     throw new Error("proxmox API " + method + " " + path + " returned non-JSON: " + body.slice(0, 200));
   }
   if (parsed && parsed.errors !== undefined && parsed.errors !== null) {
+    logWarn("proxmox-api " + method + " " + path + " error: " + JSON.stringify(parsed.errors));
     throw new Error("proxmox API " + method + " " + path + " error: " + JSON.stringify(parsed.errors));
   }
   return parsed && parsed.data !== undefined ? parsed.data : parsed;
 }
 
 // apiCallLenient returns null instead of throwing on an API error, for cleanup
-// operations where "already gone" is the desired end state.
+// and readiness polling where "already gone" / "not ready yet" is the expected
+// end state. It never logs, so polling a not-yet-ready container stays quiet.
 function apiCallLenient(method: string, path: string, form: Array<[string, string]>): any {
   try {
-    return apiCall(method, path, form);
+    return apiCall(method, path, form, true);
   } catch (e) {
     return null;
   }
 }
 
-// vmidByHostname resolves a container hostname (e.g. "wsd-ws-abc") to its
-// numeric VMID, or "" when no such container exists.
-function vmidByHostname(hostname: string): string {
-  const list: any[] = apiCall("GET", "/nodes/" + nodeName() + "/lxc", []) || [];
-  for (let i = 0; i < list.length; i++) {
-    if (list[i] && str(list[i].name) === hostname) {
-      return String(list[i].vmid);
-    }
+// workspaceVMID derives a stable Proxmox VMID (100..999999999) from the
+// workspace ID. It replaces GET /cluster/nextid, whose returned value is not
+// atomic across concurrent provisions: two simultaneous provisions read the
+// same "next free" ID and collide. A deterministic VMID is race-free and makes
+// destroy/recover able to compute the VMID without a list lookup. Collisions
+// are astronomically unlikely over the ~10^9-ID range for workspace counts the
+// daemon can run.
+function workspaceVMID(workspaceID: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < workspaceID.length; i++) {
+    h ^= workspaceID.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
   }
-  return "";
+  return 100 + (h % 999999900);
+}
+
+// vmidFromHostname returns the VMID for a "wsd-<workspace-id>" hostname.
+function vmidFromHostname(hostname: string): string {
+  return String(workspaceVMID(hostname.replace(/^wsd-/, "")));
 }
 
 // containerStatus returns the container's status string, or "" on error.
@@ -325,7 +344,7 @@ function waitForTask(upid: string): void {
   const deadline = Date.now() + bootTimeoutMs();
   let lastWarn = 0;
   for (;;) {
-    const data: any = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", []);
+    const data: any = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", [], true);
     if (data && data.status === "stopped") {
       if (data.exitstatus && data.exitstatus !== "OK") {
         throw new Error("proxmox task " + upid + " failed: " + str(data.exitstatus));
@@ -763,10 +782,10 @@ const proxmoxLXCPlugin: RuntimePlugin = {
 
     logInfo("proxmox: provisioning " + hostname + " on node " + nodeName() + " (net0=" + net0 + ")");
 
-    // Allocate the next free VMID.
-    const nextid = apiCall("GET", "/cluster/nextid", []);
-    const vmid = String(nextid);
-    logInfo("proxmox: allocated VMID " + vmid + " for " + hostname);
+    // Derive a stable VMID from the workspace ID (race-free, unlike
+    // GET /cluster/nextid across concurrent provisions).
+    const vmid = String(workspaceVMID(workspaceID));
+    logInfo("proxmox: using VMID " + vmid + " for " + hostname);
 
     const form: Array<[string, string]> = [
       ["vmid", vmid],
@@ -815,31 +834,29 @@ const proxmoxLXCPlugin: RuntimePlugin = {
 
   destroy(handle: Handle): void {
     const hostname = str(handle.native_id);
-    const vmid = vmidByHostname(hostname);
-    destroyVM(vmid, hostname.replace(/^wsd-/, ""));
+    destroyVM(vmidFromHostname(hostname), hostname.replace(/^wsd-/, ""));
   },
 
   destroyByID(id: string): void {
     const hostname = str(id);
-    const vmid = vmidByHostname(hostname);
-    destroyVM(vmid, hostname.replace(/^wsd-/, ""));
+    destroyVM(vmidFromHostname(hostname), hostname.replace(/^wsd-/, ""));
   },
 
   destroyWorkspaceByID(workspaceID: string): void {
     validateWorkspaceID(workspaceID);
     const hostname = hostnamePrefix + workspaceID;
-    const vmid = vmidByHostname(hostname);
-    destroyVM(vmid, workspaceID);
+    destroyVM(vmidFromHostname(hostname), workspaceID);
   },
 
   recover(nativeID: string, workDir: string): Handle {
     const hostname = str(nativeID);
     validateHostname(hostname);
-    const vmid = vmidByHostname(hostname);
-    if (vmid === "") {
+    const vmid = vmidFromHostname(hostname);
+    const status = containerStatus(vmid);
+    if (status === "") {
       throw new Error("container " + hostname + " not found");
     }
-    if (containerStatus(vmid) !== "running") {
+    if (status !== "running") {
       apiCall("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/start", []);
       waitForRunning(vmid);
     }

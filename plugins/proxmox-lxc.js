@@ -180,7 +180,7 @@ function apiArgs(method, path, form) {
   if (insecureTLS()) {
     args.push("-k");
   }
-  args.push("--connect-timeout", "10", "--max-time", "120");
+  args.push("--connect-timeout", "10", "--max-time", "30");
   if (method !== "GET") {
     args.push("-X", method);
   }
@@ -191,9 +191,13 @@ function apiArgs(method, path, form) {
   args.push(apiBase() + path);
   return args;
 }
-function apiCall(method, path, form) {
+function apiCall(method, path, form, quiet) {
+  if (!quiet) {
+    logInfo("proxmox-api " + method + " " + path);
+  }
   const res = host.run(apiArgs(method, path, form));
   if (res.exit_code !== 0) {
+    logWarn("proxmox-api " + method + " " + path + " failed (curl exit " + res.exit_code + "): " + str(res.stderr));
     throw new Error("proxmox API " + method + " " + path + " failed (curl exit " + res.exit_code + "): " + str(res.stderr));
   }
   const body = str(res.stdout).trim();
@@ -201,28 +205,32 @@ function apiCall(method, path, form) {
   try {
     parsed = JSON.parse(body);
   } catch (e) {
+    logWarn("proxmox-api " + method + " " + path + " returned non-JSON: " + body.slice(0, 200));
     throw new Error("proxmox API " + method + " " + path + " returned non-JSON: " + body.slice(0, 200));
   }
   if (parsed && parsed.errors !== void 0 && parsed.errors !== null) {
+    logWarn("proxmox-api " + method + " " + path + " error: " + JSON.stringify(parsed.errors));
     throw new Error("proxmox API " + method + " " + path + " error: " + JSON.stringify(parsed.errors));
   }
   return parsed && parsed.data !== void 0 ? parsed.data : parsed;
 }
 function apiCallLenient(method, path, form) {
   try {
-    return apiCall(method, path, form);
+    return apiCall(method, path, form, true);
   } catch (e) {
     return null;
   }
 }
-function vmidByHostname(hostname) {
-  const list = apiCall("GET", "/nodes/" + nodeName() + "/lxc", []) || [];
-  for (let i = 0; i < list.length; i++) {
-    if (list[i] && str(list[i].name) === hostname) {
-      return String(list[i].vmid);
-    }
+function workspaceVMID(workspaceID) {
+  let h = 2166136261;
+  for (let i = 0; i < workspaceID.length; i++) {
+    h ^= workspaceID.charCodeAt(i);
+    h = h * 16777619 >>> 0;
   }
-  return "";
+  return 100 + h % 999999900;
+}
+function vmidFromHostname(hostname) {
+  return String(workspaceVMID(hostname.replace(/^wsd-/, "")));
 }
 function containerStatus(vmid) {
   const data = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/current", []);
@@ -240,7 +248,7 @@ function waitForTask(upid) {
   const deadline = Date.now() + bootTimeoutMs();
   let lastWarn = 0;
   for (; ; ) {
-    const data = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", []);
+    const data = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", [], true);
     if (data && data.status === "stopped") {
       if (data.exitstatus && data.exitstatus !== "OK") {
         throw new Error("proxmox task " + upid + " failed: " + str(data.exitstatus));
@@ -617,9 +625,8 @@ const proxmoxLXCPlugin = {
     validateHostname(hostname);
     const pubkey = readPublicKey();
     logInfo("proxmox: provisioning " + hostname + " on node " + nodeName() + " (net0=" + net0 + ")");
-    const nextid = apiCall("GET", "/cluster/nextid", []);
-    const vmid = String(nextid);
-    logInfo("proxmox: allocated VMID " + vmid + " for " + hostname);
+    const vmid = String(workspaceVMID(workspaceID));
+    logInfo("proxmox: using VMID " + vmid + " for " + hostname);
     const form = [
       ["vmid", vmid],
       ["hostname", hostname],
@@ -660,28 +667,26 @@ const proxmoxLXCPlugin = {
   },
   destroy(handle) {
     const hostname = str(handle.native_id);
-    const vmid = vmidByHostname(hostname);
-    destroyVM(vmid, hostname.replace(/^wsd-/, ""));
+    destroyVM(vmidFromHostname(hostname), hostname.replace(/^wsd-/, ""));
   },
   destroyByID(id) {
     const hostname = str(id);
-    const vmid = vmidByHostname(hostname);
-    destroyVM(vmid, hostname.replace(/^wsd-/, ""));
+    destroyVM(vmidFromHostname(hostname), hostname.replace(/^wsd-/, ""));
   },
   destroyWorkspaceByID(workspaceID) {
     validateWorkspaceID(workspaceID);
     const hostname = hostnamePrefix + workspaceID;
-    const vmid = vmidByHostname(hostname);
-    destroyVM(vmid, workspaceID);
+    destroyVM(vmidFromHostname(hostname), workspaceID);
   },
   recover(nativeID, workDir) {
     const hostname = str(nativeID);
     validateHostname(hostname);
-    const vmid = vmidByHostname(hostname);
-    if (vmid === "") {
+    const vmid = vmidFromHostname(hostname);
+    const status = containerStatus(vmid);
+    if (status === "") {
       throw new Error("container " + hostname + " not found");
     }
-    if (containerStatus(vmid) !== "running") {
+    if (status !== "running") {
       apiCall("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/start", []);
       waitForRunning(vmid);
     }
