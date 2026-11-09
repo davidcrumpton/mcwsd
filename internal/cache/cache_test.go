@@ -24,6 +24,22 @@ func TestNewManager_CreatesCacheDir(t *testing.T) {
 	}
 }
 
+func TestNewManager_EmptyDirDisablesCache(t *testing.T) {
+	m, err := NewManager("", 1)
+	if err != nil {
+		t.Fatalf("NewManager with empty dir: %v", err)
+	}
+	if m == nil {
+		t.Fatal("NewManager returned nil")
+	}
+	if _, ok := m.Get("anything"); ok {
+		t.Error("empty-dir cache reported a hit")
+	}
+	if err := m.Save("key", "/src"); err != nil {
+		t.Errorf("empty-dir Save should be a no-op, got: %v", err)
+	}
+}
+
 func TestGet_MissingKey(t *testing.T) {
 	m, err := NewManager(t.TempDir(), 1)
 	if err != nil {

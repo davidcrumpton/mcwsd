@@ -25,16 +25,24 @@ type cacheEntry struct {
 
 // NewManager creates a new cache manager with the given directory and max size in GB.
 func NewManager(cacheDir string, maxSizeGB int) (*Manager, error) {
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return nil, err
-	}
-
 	maxSizeBytes := int64(maxSizeGB) * 1024 * 1024 * 1024
 
 	m := &Manager{
 		cacheDir:     cacheDir,
 		maxSizeBytes: maxSizeBytes,
 		entries:      make(map[string]*cacheEntry),
+	}
+
+	// An empty cache directory disables caching. This is used by the cleanup
+	// command, which constructs a backend for lifecycle-only work and never
+	// caches; skipping MkdirAll("") and the eviction loop keeps it working
+	// without a cache.
+	if cacheDir == "" {
+		return m, nil
+	}
+
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return nil, err
 	}
 
 	// Start background eviction ticker
@@ -45,6 +53,10 @@ func NewManager(cacheDir string, maxSizeGB int) (*Manager, error) {
 
 // Get retrieves a cached entry by key. Returns path and hit status.
 func (m *Manager) Get(key string) (string, bool) {
+	if m.cacheDir == "" {
+		return "", false
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -59,6 +71,10 @@ func (m *Manager) Get(key string) (string, bool) {
 
 // Save stores a cache entry. The sourcePath is the path inside a container to cache.
 func (m *Manager) Save(key, sourcePath string) error {
+	if m.cacheDir == "" {
+		return nil
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
