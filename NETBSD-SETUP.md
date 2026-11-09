@@ -130,6 +130,7 @@ verify:
    not).
 2. Login classes bound *resource limits* (fork bombs, memory, cpu). They give
    **no** filesystem, network, or uid isolation.
+3. You can apply quotas for all workspace accounts with `quotaon -a` and `edquota`, which apply limits to all users for each quota-enabled filesystem.
 
 ---
 
