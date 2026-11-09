@@ -55,7 +55,7 @@ The resulting secret is shown once and looks like
 an environment variable on the daemon host (default name `PVE_API_TOKEN`):
 
 ```sh
-export PVE_API_TOKEN="PVEAPIToken=root@pam!mcwsd=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+export PVE_API_TOKEN="root@pam!mcwsd=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 ```
 
 The plugin never reads the token from a flag; it reads the environment variable
