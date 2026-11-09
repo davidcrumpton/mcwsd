@@ -181,8 +181,10 @@ func (b *Backend) startProvisionJob(ctx context.Context, spec internal.Workspace
 		case err == nil:
 			job.finish(ws, nil, internal.ProcessSucceeded)
 		case errors.Is(jobCtx.Err(), context.DeadlineExceeded):
+			logger.Warn("provision_timed_out", "workspace_id", job.workspaceID, "timeout", timeout)
 			job.finish(nil, fmt.Errorf("provisioning timed out after %s", timeout), internal.ProcessTimedOut)
 		default:
+			logger.Warn("provision_failed", "workspace_id", job.workspaceID, "error", err)
 			job.finish(nil, err, internal.ProcessFailed)
 		}
 		b.saveProvisionEntry(job)

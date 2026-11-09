@@ -38,6 +38,15 @@ function num(v: unknown, def: number): number {
   return typeof v === "number" ? v : def;
 }
 
+// Logging helpers. host.log levels: 1 warn, 2 info, 3 error. These make the
+// lifecycle observable from the daemon log; host.run itself is silent.
+function logInfo(msg: string): void {
+  host.log(2, msg);
+}
+function logWarn(msg: string): void {
+  host.log(1, msg);
+}
+
 // guestPath is exported for every command run in the guest. sshd starts a
 // non-login shell, which may not include the full system path, so tools
 // installed under /usr/bin or /usr/local/bin are pinned explicitly.
@@ -234,6 +243,9 @@ function apiArgs(method: string, path: string, form: Array<[string, string]>): s
   if (insecureTLS()) {
     args.push("-k");
   }
+  // Bound every API call so a hung connection cannot block a provision
+  // indefinitely (the daemon-side request may have no deadline).
+  args.push("--connect-timeout", "10", "--max-time", "120");
   if (method !== "GET") {
     args.push("-X", method);
   }
@@ -294,11 +306,24 @@ function containerStatus(vmid: string): string {
   return data && data.status ? str(data.status) : "";
 }
 
+// waitingWarn emits a periodic "still waiting" warning so a stalled provision
+// is visible in the daemon log instead of hanging silently. Returns the new
+// last-warn timestamp.
+function waitingWarn(lastWarn: number, what: string): number {
+  const now = Date.now();
+  if (now - lastWarn >= 15000) {
+    logWarn("proxmox: still waiting for " + what);
+    return now;
+  }
+  return lastWarn;
+}
+
 // waitForTask polls a task UPID until it finishes, failing fast on a non-OK
 // exit status. The create task carries start=1, so success means the container
 // is created and started.
 function waitForTask(upid: string): void {
   const deadline = Date.now() + bootTimeoutMs();
+  let lastWarn = 0;
   for (;;) {
     const data: any = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", []);
     if (data && data.status === "stopped") {
@@ -310,6 +335,7 @@ function waitForTask(upid: string): void {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for proxmox task " + upid);
     }
+    lastWarn = waitingWarn(lastWarn, "create task " + upid + " (status " + (data && data.status ? str(data.status) : "?") + ")");
     host.sleep(pollIntervalMs());
   }
 }
@@ -317,6 +343,7 @@ function waitForTask(upid: string): void {
 // waitForRunning polls status/current until the container reports "running".
 function waitForRunning(vmid: string): void {
   const deadline = Date.now() + bootTimeoutMs();
+  let lastWarn = 0;
   for (;;) {
     const status = containerStatus(vmid);
     if (status === "running") {
@@ -325,6 +352,7 @@ function waitForRunning(vmid: string): void {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for container " + vmid + " to become running (last status: " + status + ")");
     }
+    lastWarn = waitingWarn(lastWarn, "container " + vmid + " to run (status " + status + ")");
     host.sleep(pollIntervalMs());
   }
 }
@@ -337,6 +365,7 @@ function getContainerIP(vmid: string, fallback: string): string {
     return fallback;
   }
   const deadline = Date.now() + bootTimeoutMs();
+  let lastWarn = 0;
   for (;;) {
     const ifaces: any[] = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/interfaces", []) || [];
     for (let i = 0; i < ifaces.length; i++) {
@@ -348,6 +377,7 @@ function getContainerIP(vmid: string, fallback: string): string {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for container " + vmid + " to obtain an IPv4 address");
     }
+    lastWarn = waitingWarn(lastWarn, "container " + vmid + " to obtain an IPv4 address");
     host.sleep(pollIntervalMs());
   }
 }
@@ -454,6 +484,7 @@ function waitForSSH(ip: string): void {
   const escalation = user === "root" ? "" : guestEscalation();
 
   // Stage 1: the SSH port must accept a TCP connection.
+  let lastWarn = 0;
   for (;;) {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for TCP " + ip + ":" + port + " to open");
@@ -462,11 +493,13 @@ function waitForSSH(ip: string): void {
     if (res.exit_code === 0) {
       break;
     }
+    lastWarn = waitingWarn(lastWarn, "TCP " + ip + ":" + port + " to open");
     host.sleep(2000);
   }
 
   // Stage 2: a real SSH command must succeed.
   const probePayload = remotePayload(escalation, ["true"], "", ["PATH=" + guestPath]);
+  lastWarn = 0;
   for (;;) {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for SSH on " + ip + " to accept commands");
@@ -478,6 +511,7 @@ function waitForSSH(ip: string): void {
     if (isFatalSSHProbeError(res.stderr)) {
       throw new Error("SSH to " + ip + " is reachable but the guest login/escalation is misconfigured: " + str(res.stderr).trim());
     }
+    lastWarn = waitingWarn(lastWarn, "SSH on " + ip + " to accept commands");
     host.sleep(2000);
   }
 }
@@ -727,9 +761,12 @@ const proxmoxLXCPlugin: RuntimePlugin = {
 
     const pubkey = readPublicKey();
 
+    logInfo("proxmox: provisioning " + hostname + " on node " + nodeName() + " (net0=" + net0 + ")");
+
     // Allocate the next free VMID.
     const nextid = apiCall("GET", "/cluster/nextid", []);
     const vmid = String(nextid);
+    logInfo("proxmox: allocated VMID " + vmid + " for " + hostname);
 
     const form: Array<[string, string]> = [
       ["vmid", vmid],
@@ -751,10 +788,12 @@ const proxmoxLXCPlugin: RuntimePlugin = {
       form.push(["nameserver", dns[0]]);
     }
 
+    logInfo("proxmox: creating container " + vmid + " from " + ostemplate());
     const upid = apiCall("POST", "/nodes/" + nodeName() + "/lxc", form);
     if (typeof upid !== "string" || upid === "") {
       throw new Error("proxmox create returned no task id");
     }
+    logInfo("proxmox: create task " + upid);
     // Undo the container if anything downstream (task/start/SSH wait) fails.
     host.onFail(apiArgs("DELETE", "/nodes/" + nodeName() + "/lxc/" + vmid, [
       ["purge", "1"],
@@ -763,10 +802,13 @@ const proxmoxLXCPlugin: RuntimePlugin = {
 
     waitForTask(upid);
     waitForRunning(vmid);
+    logInfo("proxmox: container " + vmid + " is running");
 
     const ip = getContainerIP(vmid, ip4 === "" ? "" : stripCIDR(ip4));
+    logInfo("proxmox: container " + vmid + " has address " + ip);
 
     waitForSSH(ip);
+    logInfo("proxmox: container " + vmid + " (" + hostname + ") ready at " + ip);
 
     return handleFor(vmid, hostname, ip, spec.work_dir);
   },
