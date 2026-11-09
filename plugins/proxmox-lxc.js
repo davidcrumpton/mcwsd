@@ -326,6 +326,26 @@ function waitForRunning(vmid) {
     host.sleep(pollIntervalMs());
   }
 }
+function firstIPv4(ifaces) {
+  for (let i = 0; i < ifaces.length; i++) {
+    const iface = ifaces[i];
+    if (!iface) continue;
+    const inet = stripCIDR(str(iface.inet));
+    if (inet !== "" && isIPv4(inet) && inet.indexOf("127.") !== 0) {
+      return inet;
+    }
+    const addrs = iface["ip-addresses"];
+    if (Array.isArray(addrs)) {
+      for (let j = 0; j < addrs.length; j++) {
+        const ip = stripCIDR(str(addrs[j] && addrs[j]["ip-address"]));
+        if (ip !== "" && isIPv4(ip) && ip.indexOf("127.") !== 0) {
+          return ip;
+        }
+      }
+    }
+  }
+  return "";
+}
 function getContainerIP(vmid, fallback) {
   if (fallback !== "") {
     return fallback;
@@ -333,17 +353,20 @@ function getContainerIP(vmid, fallback) {
   const deadline = Date.now() + bootTimeoutMs();
   let lastWarn = Date.now();
   for (; ; ) {
-    const ifaces = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/interfaces", []) || [];
-    for (let i = 0; i < ifaces.length; i++) {
-      const inet = str(ifaces[i] && ifaces[i].inet);
-      if (inet !== "" && inet.indexOf("127.") !== 0 && isIPv4(inet)) {
-        return inet;
-      }
+    const raw = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/interfaces", []);
+    const ifaces = Array.isArray(raw) ? raw : [];
+    const ip = firstIPv4(ifaces);
+    if (ip !== "") {
+      return ip;
     }
     if (Date.now() > deadline) {
-      throw new Error("timed out waiting for container " + vmid + " to obtain an IPv4 address");
+      throw new Error("timed out waiting for container " + vmid + " to obtain an IPv4 address (interfaces: " + JSON.stringify(raw) + ")");
     }
-    lastWarn = waitingWarn(lastWarn, "container " + vmid + " to obtain an IPv4 address");
+    const now = Date.now();
+    if (now - lastWarn >= 15e3) {
+      logWarn("proxmox: still waiting for container " + vmid + " IPv4 (interfaces: " + JSON.stringify(raw) + ")");
+      lastWarn = now;
+    }
     host.sleep(pollIntervalMs());
   }
 }
