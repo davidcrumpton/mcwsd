@@ -213,10 +213,32 @@ describe("proxmox-lxc plugin", () => {
     expect(form.net0).toBe("name=eth0,bridge=vmbr0,ip=dhcp");
     expect(form["ssh-public-keys"]).toContain("ssh-ed25519");
     expect(form.unprivileged).toBe("1");
+    expect(form.features).toBe("nesting=1");
 
     const joined = runs.map((r) => r.argv.join(" "));
     expect(joined.some((c) => c.indexOf("/interfaces") !== -1)).toBe(true);
     expect(runs.some((r) => r.argv[0] === "ssh")).toBe(true);
+  });
+
+  it("treats a task that exits with WARNINGS as success", () => {
+    const runs: RunCall[] = [];
+    installMockHost({
+      options: { ...defaultOptions },
+      run: (argv: string[]) => {
+        runs.push({ argv });
+        if (argv[0] === "curl") {
+          const path = url(argv);
+          if (path.indexOf("/tasks/") !== -1) {
+            return { stdout: '{"data":{"status":"stopped","exitstatus":"WARNINGS"}}', stderr: "", exit_code: 0 };
+          }
+          return apiResponse(argv);
+        }
+        if (argv[0] === "cat") return { stdout: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test key\n", stderr: "", exit_code: 0 };
+        return { stdout: "", stderr: "", exit_code: 0 };
+      },
+    });
+    const handle = plugin.provision({ workspace_id: "ws-abc", work_dir: "/w" });
+    expect(handle.native_id).toBe("wsd-ws-abc");
   });
 
   it("uses a static address from the option when set", () => {

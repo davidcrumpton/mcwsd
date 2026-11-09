@@ -236,6 +236,21 @@ function containerStatus(vmid) {
   const data = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/current", []);
   return data && data.status ? str(data.status) : "";
 }
+function taskLogTail(upid, lines) {
+  const data = apiCallLenient("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/log", []);
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    return "";
+  }
+  const last = data.slice(-lines);
+  const texts = [];
+  for (let i = 0; i < last.length; i++) {
+    const t = str(last[i] && last[i].t).trim();
+    if (t !== "") {
+      texts.push(t);
+    }
+  }
+  return texts.join(" | ");
+}
 function waitingWarn(lastWarn, what) {
   const now = Date.now();
   if (now - lastWarn >= 15e3) {
@@ -246,25 +261,36 @@ function waitingWarn(lastWarn, what) {
 }
 function waitForTask(upid) {
   const deadline = Date.now() + bootTimeoutMs();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (; ; ) {
     const data = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", [], true);
     if (data && data.status === "stopped") {
-      if (data.exitstatus && data.exitstatus !== "OK") {
-        throw new Error("proxmox task " + upid + " failed: " + str(data.exitstatus));
+      const exit = str(data.exitstatus);
+      if (exit !== "" && exit !== "OK" && exit !== "WARNINGS") {
+        const tail = taskLogTail(upid, 5);
+        throw new Error("proxmox task " + upid + " failed: " + exit + (tail !== "" ? " (log: " + tail + ")" : ""));
+      }
+      if (exit === "WARNINGS") {
+        logWarn("proxmox: task " + upid + " completed with warnings (see container task log)");
       }
       return;
     }
     if (Date.now() > deadline) {
-      throw new Error("timed out waiting for proxmox task " + upid);
+      const tail = taskLogTail(upid, 5);
+      throw new Error("timed out waiting for proxmox task " + upid + (tail !== "" ? " (last log: " + tail + ")" : ""));
     }
-    lastWarn = waitingWarn(lastWarn, "create task " + upid + " (status " + (data && data.status ? str(data.status) : "?") + ")");
+    const now = Date.now();
+    if (now - lastWarn >= 15e3) {
+      const tail = taskLogTail(upid, 3);
+      logWarn("proxmox: task " + upid + " still running" + (tail !== "" ? ": " + tail : ""));
+      lastWarn = now;
+    }
     host.sleep(pollIntervalMs());
   }
 }
 function waitForRunning(vmid) {
   const deadline = Date.now() + bootTimeoutMs();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (; ; ) {
     const status = containerStatus(vmid);
     if (status === "running") {
@@ -282,7 +308,7 @@ function getContainerIP(vmid, fallback) {
     return fallback;
   }
   const deadline = Date.now() + bootTimeoutMs();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (; ; ) {
     const ifaces = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/interfaces", []) || [];
     for (let i = 0; i < ifaces.length; i++) {
@@ -372,7 +398,7 @@ function waitForSSH(ip) {
   const user = loginUser();
   const key = sshKey();
   const escalation = user === "root" ? "" : guestEscalation();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (; ; ) {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for TCP " + ip + ":" + port + " to open");
@@ -385,7 +411,7 @@ function waitForSSH(ip) {
     host.sleep(2e3);
   }
   const probePayload = remotePayload(escalation, ["true"], "", ["PATH=" + guestPath]);
-  lastWarn = 0;
+  lastWarn = Date.now();
   for (; ; ) {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for SSH on " + ip + " to accept commands");
@@ -640,7 +666,7 @@ const proxmoxLXCPlugin = {
       ["net0", net0],
       ["ssh-public-keys", pubkey],
       ["unprivileged", "1"],
-      ["start", "1"]
+      ["features", "nesting=1"]
     ];
     const dns = dnsServers();
     if (dns.length > 0) {
@@ -657,6 +683,11 @@ const proxmoxLXCPlugin = {
       ["destroy-unreferenced-disks", "1"]
     ]));
     waitForTask(upid);
+    logInfo("proxmox: starting container " + vmid);
+    const startUpid = apiCall("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/start", []);
+    if (typeof startUpid === "string" && startUpid !== "") {
+      waitForTask(startUpid);
+    }
     waitForRunning(vmid);
     logInfo("proxmox: container " + vmid + " is running");
     const ip = getContainerIP(vmid, ip4 === "" ? "" : stripCIDR(ip4));

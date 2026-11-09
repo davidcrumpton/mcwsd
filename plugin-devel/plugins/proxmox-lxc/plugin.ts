@@ -325,6 +325,25 @@ function containerStatus(vmid: string): string {
   return data && data.status ? str(data.status) : "";
 }
 
+// taskLogTail returns the last few lines of a task's Proxmox-side log, so a
+// stuck or failed task surfaces the actual worker error instead of just
+// "running"/"failed".
+function taskLogTail(upid: string, lines: number): string {
+  const data: any = apiCallLenient("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/log", []);
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    return "";
+  }
+  const last = data.slice(-lines);
+  const texts: string[] = [];
+  for (let i = 0; i < last.length; i++) {
+    const t = str(last[i] && last[i].t).trim();
+    if (t !== "") {
+      texts.push(t);
+    }
+  }
+  return texts.join(" | ");
+}
+
 // waitingWarn emits a periodic "still waiting" warning so a stalled provision
 // is visible in the daemon log instead of hanging silently. Returns the new
 // last-warn timestamp.
@@ -338,23 +357,34 @@ function waitingWarn(lastWarn: number, what: string): number {
 }
 
 // waitForTask polls a task UPID until it finishes, failing fast on a non-OK
-// exit status. The create task carries start=1, so success means the container
-// is created and started.
+// exit status. A stuck task surfaces its Proxmox-side log tail so the cause
+// (template/storage/lock) is visible from the daemon.
 function waitForTask(upid: string): void {
   const deadline = Date.now() + bootTimeoutMs();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (;;) {
     const data: any = apiCall("GET", "/nodes/" + nodeName() + "/tasks/" + upid + "/status", [], true);
     if (data && data.status === "stopped") {
-      if (data.exitstatus && data.exitstatus !== "OK") {
-        throw new Error("proxmox task " + upid + " failed: " + str(data.exitstatus));
+      const exit = str(data.exitstatus);
+      if (exit !== "" && exit !== "OK" && exit !== "WARNINGS") {
+        const tail = taskLogTail(upid, 5);
+        throw new Error("proxmox task " + upid + " failed: " + exit + (tail !== "" ? " (log: " + tail + ")" : ""));
+      }
+      if (exit === "WARNINGS") {
+        logWarn("proxmox: task " + upid + " completed with warnings (see container task log)");
       }
       return;
     }
     if (Date.now() > deadline) {
-      throw new Error("timed out waiting for proxmox task " + upid);
+      const tail = taskLogTail(upid, 5);
+      throw new Error("timed out waiting for proxmox task " + upid + (tail !== "" ? " (last log: " + tail + ")" : ""));
     }
-    lastWarn = waitingWarn(lastWarn, "create task " + upid + " (status " + (data && data.status ? str(data.status) : "?") + ")");
+    const now = Date.now();
+    if (now - lastWarn >= 15000) {
+      const tail = taskLogTail(upid, 3);
+      logWarn("proxmox: task " + upid + " still running" + (tail !== "" ? ": " + tail : ""));
+      lastWarn = now;
+    }
     host.sleep(pollIntervalMs());
   }
 }
@@ -362,7 +392,7 @@ function waitForTask(upid: string): void {
 // waitForRunning polls status/current until the container reports "running".
 function waitForRunning(vmid: string): void {
   const deadline = Date.now() + bootTimeoutMs();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (;;) {
     const status = containerStatus(vmid);
     if (status === "running") {
@@ -384,7 +414,7 @@ function getContainerIP(vmid: string, fallback: string): string {
     return fallback;
   }
   const deadline = Date.now() + bootTimeoutMs();
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (;;) {
     const ifaces: any[] = apiCallLenient("GET", "/nodes/" + nodeName() + "/lxc/" + vmid + "/interfaces", []) || [];
     for (let i = 0; i < ifaces.length; i++) {
@@ -503,7 +533,7 @@ function waitForSSH(ip: string): void {
   const escalation = user === "root" ? "" : guestEscalation();
 
   // Stage 1: the SSH port must accept a TCP connection.
-  let lastWarn = 0;
+  let lastWarn = Date.now();
   for (;;) {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for TCP " + ip + ":" + port + " to open");
@@ -518,7 +548,7 @@ function waitForSSH(ip: string): void {
 
   // Stage 2: a real SSH command must succeed.
   const probePayload = remotePayload(escalation, ["true"], "", ["PATH=" + guestPath]);
-  lastWarn = 0;
+  lastWarn = Date.now();
   for (;;) {
     if (Date.now() > deadline) {
       throw new Error("timed out waiting for SSH on " + ip + " to accept commands");
@@ -800,7 +830,7 @@ const proxmoxLXCPlugin: RuntimePlugin = {
       ["net0", net0],
       ["ssh-public-keys", pubkey],
       ["unprivileged", "1"],
-      ["start", "1"],
+      ["features", "nesting=1"],
     ];
     const dns = dnsServers();
     if (dns.length > 0) {
@@ -819,7 +849,14 @@ const proxmoxLXCPlugin: RuntimePlugin = {
       ["destroy-unreferenced-disks", "1"],
     ]));
 
+    // Create and start are separate so a slow/hung boot is not folded into the
+    // (filesystem-only) create task, and a stuck start is reported on its own.
     waitForTask(upid);
+    logInfo("proxmox: starting container " + vmid);
+    const startUpid = apiCall("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/start", []);
+    if (typeof startUpid === "string" && startUpid !== "") {
+      waitForTask(startUpid);
+    }
     waitForRunning(vmid);
     logInfo("proxmox: container " + vmid + " is running");
 
