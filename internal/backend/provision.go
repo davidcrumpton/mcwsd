@@ -503,8 +503,8 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	}
 
 	// Copy repo into the runtime
-	emit("repository_copy", "copying repository into %s", repoPath)
-	if err := handle.Transport.CopyDirIn(ctx, tmpDir, repoPath); err != nil {
+	emit("repository_copy", "copying repository into %s", handle.WorkDir)
+	if err := handle.Transport.CopyDirIn(ctx, tmpDir, handle.WorkDir); err != nil {
 		b.provisioner.Destroy(ctx, handle)
 		if rmErr := b.stateStore.Remove(wsID); rmErr != nil {
 			logger.Warn("state_store_remove_failed", "workspace_id", wsID, "error", rmErr)
@@ -518,7 +518,7 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	// failure is non-fatal.
 	if bs, ok := handle.Transport.(runtime.Bootstrapper); ok {
 		emit("runtime_bootstrap", "bootstrapping runtime")
-		if err := bs.Bootstrap(ctx, repoPath); err != nil {
+		if err := bs.Bootstrap(ctx, handle.WorkDir); err != nil {
 			logger.Warn("runtime_bootstrap_failed", "workspace_id", wsID, "error", err)
 		} else {
 			logger.Info("runtime_bootstrap_complete", "workspace_id", wsID)
@@ -528,7 +528,7 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	// Run install command if not cache hit
 	if !cacheHit && profile.InstallCommand != "" {
 		emit("dependency_install", "installing dependencies: %s", profile.InstallCommand)
-		if _, err := handle.Transport.Exec(ctx, []string{"sh", "-c", profile.InstallCommand}, repoPath, nil); err != nil {
+		if _, err := handle.Transport.Exec(ctx, []string{"sh", "-c", profile.InstallCommand}, handle.WorkDir, nil); err != nil {
 			logger.Warn("install_failed", "workspace_id", wsID, "error", err)
 			// Continue anyway - agent can handle install failures
 		} else {
@@ -545,7 +545,7 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	// Run post-create command if specified
 	if profile.PostCreateCommand != "" {
 		emit("post_create", "running post-create: %s", profile.PostCreateCommand)
-		if _, err := handle.Transport.Exec(ctx, []string{"sh", "-c", profile.PostCreateCommand}, repoPath, nil); err != nil {
+		if _, err := handle.Transport.Exec(ctx, []string{"sh", "-c", profile.PostCreateCommand}, handle.WorkDir, nil); err != nil {
 			logger.Warn("post_create_failed", "workspace_id", wsID, "error", err)
 		}
 	}

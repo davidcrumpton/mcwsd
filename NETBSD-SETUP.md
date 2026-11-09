@@ -7,9 +7,9 @@ runtime provides **process isolation only** — a workspace is an ordinary
 unprivileged account, nothing more. Read the Security briefing in §6 before
 relying on it.
 
-NetBSD has no jails and ships no privilege escalator (its stance is "`su` is
-fine"), but a non-interactive daemon cannot use `su`. This runtime therefore
-requires an escalator from pkgsrc: **sudo** (recommended) or **doas**.
+NetBSD has no jails and ships no privilege escalator, but a non-interactive
+daemon cannot use `su`. This runtime therefore requires an escalator from
+pkgsrc: **sudo** (recommended) or **doas**.
 
 ---
 
@@ -131,6 +131,7 @@ verify:
 2. Login classes bound *resource limits* (fork bombs, memory, cpu). They give
    **no** filesystem, network, or uid isolation.
 3. You can apply quotas for all workspace accounts with `quotaon -a` and `edquota`, which apply limits to all users for each quota-enabled filesystem.
+4. You can apply `sysctl -w security.curtain=1` to enable the "curtain" security feature, which helps prevent information leaks between processes.
 
 ---
 
