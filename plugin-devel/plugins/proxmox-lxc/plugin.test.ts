@@ -298,7 +298,11 @@ describe("proxmox-lxc plugin", () => {
     plugin.destroyByID("wsd-ws-abc");
     const joined = runs.map((r) => r.argv.join(" "));
     expect(joined.some((c) => c.indexOf("/status/stop") !== -1)).toBe(true);
-    expect(joined.some((c) => c.indexOf("DELETE") !== -1 && c.indexOf("/lxc/" + vmid) !== -1)).toBe(true);
+    // DELETE parameters must be URL query params, not a --data-urlencode body.
+    const del = runs.find((r) => r.argv.join(" ").indexOf("DELETE") !== -1 && r.argv.join(" ").indexOf("/lxc/" + vmid) !== -1)!;
+    expect(del).toBeTruthy();
+    expect(del.argv.join(" ")).toContain("/lxc/" + vmid + "?force=1&purge=1&destroy-unreferenced-disks=1");
+    expect(del.argv).not.toContain("--data-urlencode");
     expect(released).toContain("ws-abc");
   });
 

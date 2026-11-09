@@ -175,6 +175,18 @@ function validateConfig() {
 function apiBase() {
   return apiURL().replace(/\/+$/, "") + "/api2/json";
 }
+function encodeQueryPart(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (/[A-Za-z0-9\-_.~]/.test(c)) {
+      out += c;
+    } else {
+      out += "%" + ("0" + s.charCodeAt(i).toString(16)).slice(-2);
+    }
+  }
+  return out;
+}
 function apiArgs(method, path, form) {
   const args = ["curl", "-sS"];
   if (insecureTLS()) {
@@ -185,10 +197,21 @@ function apiArgs(method, path, form) {
     args.push("-X", method);
   }
   args.push("-H", "Authorization: PVEAPIToken=" + apiToken());
-  for (let i = 0; i < form.length; i++) {
-    args.push("--data-urlencode", form[i][0] + "=" + form[i][1]);
+  let url = apiBase() + path;
+  if (method === "GET" || method === "DELETE") {
+    const qs = [];
+    for (let i = 0; i < form.length; i++) {
+      qs.push(encodeQueryPart(form[i][0]) + "=" + encodeQueryPart(form[i][1]));
+    }
+    if (qs.length > 0) {
+      url += "?" + qs.join("&");
+    }
+  } else {
+    for (let i = 0; i < form.length; i++) {
+      args.push("--data-urlencode", form[i][0] + "=" + form[i][1]);
+    }
   }
-  args.push(apiBase() + path);
+  args.push(url);
   return args;
 }
 function apiCall(method, path, form, quiet) {
@@ -431,8 +454,16 @@ function destroyVM(vmid, workspaceID) {
   if (vmid === "") {
     return;
   }
-  apiCallLenient("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/stop", []);
+  const stop = apiCallLenient("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/stop", []);
+  if (typeof stop === "string" && stop !== "") {
+    try {
+      waitForTask(stop);
+    } catch (e) {
+      logWarn("proxmox: stop task for " + vmid + " did not complete cleanly, deleting anyway");
+    }
+  }
   apiCallLenient("DELETE", "/nodes/" + nodeName() + "/lxc/" + vmid, [
+    ["force", "1"],
     ["purge", "1"],
     ["destroy-unreferenced-disks", "1"]
   ]);

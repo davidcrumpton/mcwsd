@@ -235,9 +235,29 @@ function apiBase(): string {
   return apiURL().replace(/\/+$/, "") + "/api2/json";
 }
 
+// encodeQueryPart percent-encodes one query-string component. goja may not
+// expose encodeURIComponent, and the components used here are simple, so a
+// minimal encoder is sufficient.
+function encodeQueryPart(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (/[A-Za-z0-9\-_.~]/.test(c)) {
+      out += c;
+    } else {
+      out += "%" + ("0" + s.charCodeAt(i).toString(16)).slice(-2);
+    }
+  }
+  return out;
+}
+
 // apiArgs builds the curl argv for one API request. The token is read from the
 // configured environment variable on every call so it can be rotated without
 // restarting the daemon; it is never embedded in the plugin source.
+//
+// Proxmox takes GET/DELETE parameters as URL query parameters and POST/PUT
+// parameters as an x-www-form-urlencoded body; sending a body on DELETE is
+// rejected with "Unexpected content for method 'DELETE'".
 function apiArgs(method: string, path: string, form: Array<[string, string]>): string[] {
   const args = ["curl", "-sS"];
   if (insecureTLS()) {
@@ -251,10 +271,22 @@ function apiArgs(method: string, path: string, form: Array<[string, string]>): s
     args.push("-X", method);
   }
   args.push("-H", "Authorization: PVEAPIToken=" + apiToken());
-  for (let i = 0; i < form.length; i++) {
-    args.push("--data-urlencode", form[i][0] + "=" + form[i][1]);
+
+  let url = apiBase() + path;
+  if (method === "GET" || method === "DELETE") {
+    const qs: string[] = [];
+    for (let i = 0; i < form.length; i++) {
+      qs.push(encodeQueryPart(form[i][0]) + "=" + encodeQueryPart(form[i][1]));
+    }
+    if (qs.length > 0) {
+      url += "?" + qs.join("&");
+    }
+  } else {
+    for (let i = 0; i < form.length; i++) {
+      args.push("--data-urlencode", form[i][0] + "=" + form[i][1]);
+    }
   }
-  args.push(apiBase() + path);
+  args.push(url);
   return args;
 }
 
@@ -571,10 +603,21 @@ function destroyVM(vmid: string, workspaceID: string): void {
   if (vmid === "") {
     return;
   }
-  // Stop first: a running container cannot be removed. Best-effort.
-  apiCallLenient("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/stop", []);
-  // Remove, purging volumes. Best-effort so a missing container is not an error.
+  // Stop first: a running container cannot be removed. Wait for the stop task
+  // so the delete below does not race an in-progress stop (which leaves the
+  // container locked). A container that is already stopped yields no task.
+  const stop = apiCallLenient("POST", "/nodes/" + nodeName() + "/lxc/" + vmid + "/status/stop", []);
+  if (typeof stop === "string" && stop !== "") {
+    try {
+      waitForTask(stop);
+    } catch (e) {
+      logWarn("proxmox: stop task for " + vmid + " did not complete cleanly, deleting anyway");
+    }
+  }
+  // Remove, purging volumes and force-destroying if still running. Best-effort
+  // so a missing container is not an error.
   apiCallLenient("DELETE", "/nodes/" + nodeName() + "/lxc/" + vmid, [
+    ["force", "1"],
     ["purge", "1"],
     ["destroy-unreferenced-disks", "1"],
   ]);
