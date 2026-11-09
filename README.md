@@ -52,6 +52,7 @@ Before running the daemon, ensure you have:
 > - OpenBSD vmd VMs: see [`OPENBSD-VMD-SETUP.md`](OPENBSD-VMD-SETUP.md)
 > - OpenIndiana/illumos zones: see [`ZONES.md`](ZONES.md)
 > - NetBSD accounts: see [`NETBSD-SETUP.md`](NETBSD-SETUP.md)
+> - Proxmox VE LXC containers: see [`PROXMOX-SETUP.md`](PROXMOX-SETUP.md)
 
 ### Running the Daemon
 

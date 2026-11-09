@@ -8,7 +8,8 @@ given a small, reviewable host API instead of raw access to the machine.
 
 The native Go backends in `internal/backend/*` have been ported to these
 plugins one at a time; `podman`, `docker`, `kubernetes`, `openbsd-vmd`,
-`freebsd-jail`, and `zones` are all available in `plugins/`.
+`freebsd-jail`, `zones`, `netbsd-account`, and `proxmox-lxc` are all available
+in `plugins/`.
 
 ## One plugin per daemon instance
 
@@ -193,6 +194,7 @@ to the plugin's vitest suite as each runtime is migrated.
 - `plugins/freebsd-jail.js` — `plugins/freebsd-jail/plugin.ts` (a jail runtime: `jexec` transport, shared/VNET networking, the reserved `ip-base-network`/`ip-pool-size` pool, `base.txz` + template download via `host.fetch` with Basic/header auth and OpenPGP signature verification).
 - `plugins/zones.js` — `plugins/zones/plugin.ts` (an illumos zone runtime: `zlogin` transport that streams commands to `sh -s` via the `{argv, stdin}` execArgs form, shared/exclusive networking, VNIC management, and the reserved `ip-base-network`/`ip-pool-size` pool).
 - `plugins/netbsd-account.js` — `plugins/netbsd-account/plugin.ts` (a NetBSD process-isolation runtime: provisions local user accounts via `useradd(8)`, and the first transport that *drops* privileges — `sudo/doas -u <account> sh -c …` on every exec, remapping core's fixed `/workspace` onto the account's home; see `NETBSD-SETUP.md`).
+- `plugins/proxmox-lxc.js` — `plugins/proxmox-lxc/plugin.ts` (a Proxmox VE LXC runtime: lifecycle over the REST API via `curl` + a stateless `PVEAPIToken`, transport over `ssh` into the container IP; static/DHCP networking mirrors the FreeBSD jail precedence; see `PROXMOX-SETUP.md`).
 
 All runtimes have been ported to plugins; the native Go provisioners that
 remain (`docker`, `podman`, `kubernetes`) are themselves thin and can be
