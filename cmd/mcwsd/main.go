@@ -789,6 +789,7 @@ func runCleanup(stateFile, jobsFile string, workspaceTTL, jobRetention time.Dura
 
 	if doOrphans {
 		leftovers := backend.Leftovers()
+		removedLeftovers := 0
 		if len(leftovers) == 0 {
 			internal.Log.Info("cleanup_orphans_none_found")
 		} else {
@@ -799,21 +800,27 @@ func runCleanup(stateFile, jobsFile string, workspaceTTL, jobRetention time.Dura
 					totalFailed++
 					continue
 				}
+				removedLeftovers++
 				internal.Log.Info("cleanup_orphan_removed", "workspace_id", e.WorkspaceID, "container_name", e.ContainerName)
 			}
+		}
 
-			// Sweep provisioner resources not tracked by any live workspace. This
-			// catches artifacts a crash left behind between resource creation and
-			// state tracking (e.g. a VM disk cloned but never started).
-			if removed, err := backend.CleanupOrphanResources(context.Background()); err != nil {
-				internal.Log.Error("cleanup_orphan_resources_failed", "error", err)
-				totalFailed++
-			} else if removed > 0 {
+		// Sweep provisioner resources not tracked by any live workspace. This
+		// runs regardless of whether there were state-file leftovers, because a
+		// provision that failed before writing its state entry leaves a
+		// container with no state record at all.
+		removedResources := 0
+		if removed, err := backend.CleanupOrphanResources(context.Background()); err != nil {
+			internal.Log.Error("cleanup_orphan_resources_failed", "error", err)
+			totalFailed++
+		} else {
+			removedResources = removed
+			if removed > 0 {
 				internal.Log.Info("cleanup_orphan_resources_removed", "count", removed)
 			}
-
-			internal.Log.Info("cleanup_orphans_complete", "removed", len(leftovers)-totalFailed, "failed", totalFailed)
 		}
+
+		internal.Log.Info("cleanup_orphans_complete", "leftovers", removedLeftovers, "resources", removedResources, "failed", totalFailed)
 	}
 
 	if doPrune {
