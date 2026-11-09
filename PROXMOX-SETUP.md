@@ -187,7 +187,7 @@ all stop and delete the container via the API and release its pooled IP. To
 sweep leftover `wsd-*` containers that no live workspace tracks:
 
 ```sh
-mcwsd cleanup --plugin plugins/proxmox-lxc.js --orphans
+mcwsd cleanup --plugin plugins/proxmox-lxc.js --proxmox-api-url https://pve02.localdomain:8006 --proxmox-node proxmox --orphans
 ```
 
 This deletes only containers whose hostname starts with `wsd-`; unrelated
