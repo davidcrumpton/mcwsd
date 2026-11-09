@@ -148,7 +148,7 @@ mcwsd daemon \
   --plugin plugins/proxmox-lxc.js \
   --proxmox-api-url https://pve.example:8006 \
   --proxmox-node pve1 \
-  --proxmox-storage local \
+  --proxmox-storage local-lvm \
   --proxmox-ostemplate local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst \
   --proxmox-bridge vmbr0 \
   --proxmox-ssh-key /var/wsd/agent_ed25519 \
