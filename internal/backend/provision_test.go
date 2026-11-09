@@ -19,7 +19,8 @@ import (
 // rooted at a temp directory, so the provisioning pipeline can be exercised
 // end to end without a container runtime.
 type provisionStub struct {
-	root string
+	root      string
+	isolation runtime.IsolationType
 }
 
 func (p *provisionStub) Name() string               { return "provision-stub" }
@@ -30,9 +31,13 @@ func (p *provisionStub) Provision(_ context.Context, spec runtime.ProvisionSpec)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return nil, err
 	}
+	isolation := p.isolation
+	if isolation == "" {
+		isolation = runtime.IsolationContainer
+	}
 	return &runtime.RuntimeHandle{
 		OS:        runtime.OSLinux,
-		Isolation: runtime.IsolationContainer,
+		Isolation: isolation,
 		WorkDir:   workDir,
 		NativeID:  "stub-" + spec.WorkspaceID,
 		Transport: &localTransport{root: p.root},
@@ -170,6 +175,44 @@ func TestProvisionJobPersisted(t *testing.T) {
 	}
 	if e.WorkspaceID != res.WorkspaceID {
 		t.Fatalf("job workspace = %q, want %q", e.WorkspaceID, res.WorkspaceID)
+	}
+}
+
+func TestProvisionBlanksBaseImageForNonContainerRuntime(t *testing.T) {
+	root := t.TempDir()
+
+	store, err := state.NewStore(filepath.Join(root, "state.json"))
+	if err != nil {
+		t.Fatalf("state store: %v", err)
+	}
+	cacheMgr, err := cache.NewManager(filepath.Join(root, "cache"), 1)
+	if err != nil {
+		t.Fatalf("cache manager: %v", err)
+	}
+
+	b := &Backend{
+		provisioner:   &provisionStub{root: root, isolation: runtime.IsolationJail},
+		cacheManager:  cacheMgr,
+		workspaces:    make(map[string]*workspaceState),
+		processes:     make(map[string]*managedProcess),
+		provisionJobs: make(map[string]*provisionJob),
+		stateStore:    store,
+		gitPushConfig: gitpush.Config{AuthMode: "token"},
+		sessionID:     "test-session",
+	}
+
+	res, err := b.Provision(context.Background(), internal.ProvisionRequest{})
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if res.Workspace == nil {
+		t.Fatal("provision should return a workspace")
+	}
+	if res.Workspace.Profile == nil {
+		t.Fatal("workspace should carry a profile")
+	}
+	if res.Workspace.Profile.BaseImage != "" {
+		t.Fatalf("BaseImage = %q, want empty for a non-container runtime", res.Workspace.Profile.BaseImage)
 	}
 }
 

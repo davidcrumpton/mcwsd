@@ -160,13 +160,21 @@ function buildRemoteCommand(cmd: string[], workDir: string, env: string[]): stri
 
 // --- handle ---
 
+// handleFor builds the per-workspace handle. The work_dir is reported as its
+// real host path (the account's home + /repo) rather than core's fixed
+// "/workspace/repo": the account model has no sandbox root, so the agent is
+// told where the repo actually lives and file tools (ListFiles, which bakes
+// the path into a `find` command) resolve correctly. execArgs still remaps the
+// "/workspace" prefix so core's provision-time CopyDirIn/install (which pass
+// the fixed path) land in the same place.
 function handleFor(account: string, workDir: string): Handle {
+  const home = homeBase() + "/" + account;
   return {
     native_id: account,
-    work_dir: workDir,
+    work_dir: remapPath(workDir, home),
     username: account,
     privilege: "user",
-    home: homeBase() + "/" + account,
+    home: home,
   };
 }
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	goruntime "runtime"
 	"strings"
 
 	"github.com/davidcrumpton/mcwsd/internal"
@@ -319,20 +318,11 @@ func (d *Detector) detectNode(repoPath string) (*internal.EnvironmentProfile, er
 // broad (git, curl, build tools and common development libraries) so an agent
 // can inspect the repo and install whatever the project actually needs at
 // runtime instead of the daemon guessing up front. It is only meaningful to
-// container runtimes; the FreeBSD jail provisioner populates jails from its
-// configured release and ignores BaseImage.
+// container runtimes; the backend blanks it once the runtime is known to be a
+// jail/zone/vm/process runtime (which ignore BaseImage).
 const genericToolchainImage = dockerHubLibrary + "buildpack-deps:stable"
 
 func (d *Detector) detectUnknown(repoPath string) (*internal.EnvironmentProfile, error) {
-	// The base image only makes sense for container runtimes. On a FreeBSD
-	// host the jail provisioner populates jails from its configured FreeBSD
-	// release and treats BaseImage as a jail root/release, so emitting a
-	// Linux image reference here is wrong. Leave it empty and let the
-	// provisioner apply its release default.
-	baseImage := genericToolchainImage
-	if goruntime.GOOS == "freebsd" {
-		baseImage = ""
-	}
 	// Language stays "unknown" and InstallCommand stays empty on purpose:
 	// there is nothing to auto-install. The agent is expected to inspect the
 	// repo and set the environment up itself (see the mcwsd tool contract).
@@ -347,7 +337,7 @@ func (d *Detector) detectUnknown(repoPath string) (*internal.EnvironmentProfile,
 		Version:        "latest",
 		PackageManager: "none",
 		InstallCommand: "",
-		BaseImage:      baseImage,
+		BaseImage:      genericToolchainImage,
 		Notes: "No project language or package manager was detected from the repo files. " +
 			"This is not an error. package_manager \"none\" refers to the project's own dependencies only; " +
 			"the runtime OS still has a system package manager (see system_package_manager/system_install_command). " +
@@ -357,16 +347,11 @@ func (d *Detector) detectUnknown(repoPath string) (*internal.EnvironmentProfile,
 }
 
 func (d *Detector) detectBlank(repoPath string) (*internal.EnvironmentProfile, error) {
-	baseImage := genericToolchainImage
-	if goruntime.GOOS == "freebsd" {
-		baseImage = ""
-	}
-
 	return &internal.EnvironmentProfile{
 		Language:       "blank",
 		Version:        "latest",
 		PackageManager: "none",
-		BaseImage:      baseImage,
+		BaseImage:      genericToolchainImage,
 		Notes: "This is a blank workspace with no repository files. " +
 			"Create or write the project files first, then inspect them before installing dependencies.",
 	}, nil

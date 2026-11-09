@@ -17,7 +17,7 @@ const plugin = pluginModule as unknown as {
   destroy: (h: { native_id: string; home: string }) => void;
   destroyByID: (id: string) => void;
   destroyWorkspaceByID: (id: string) => void;
-  recover: (id: string, workDir: string) => { native_id: string; home: string; username: string };
+  recover: (id: string, workDir: string) => { native_id: string; home: string; username: string; work_dir: string };
   cleanupOrphans: (keep: string[]) => number;
   execArgs: (h: { username: string; home: string }, cmd: string[], wd: string, env: string[], o: { stdin: boolean; root: boolean }) => string[];
 };
@@ -119,6 +119,7 @@ describe("netbsd-account plugin", () => {
     expect(handle.username).toBe(account);
     expect(handle.privilege).toBe("user");
     expect(handle.home).toBe(home);
+    expect(handle.work_dir).toBe(home + "/repo");
 
     expect(runs[0]).toEqual(["sudo", "groupadd", account]);
     expect(runs[1]).toEqual([
@@ -199,6 +200,7 @@ describe("netbsd-account plugin", () => {
     expect(handle.native_id).toBe(account);
     expect(handle.home).toBe(home);
     expect(handle.username).toBe(account);
+    expect(handle.work_dir).toBe(home + "/repo");
   });
 
   it("throws when recovering a missing account", () => {

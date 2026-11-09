@@ -463,6 +463,15 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	}
 	emit("runtime_ready", "runtime %s ready", handle.OS)
 
+	// The base image only means something to container runtimes. A jail,
+	// zone, VM, or process runtime populates its environment from its own
+	// source (release, template, disk image, or the host OS) and ignores
+	// Image, so blank it rather than leak a container image reference to the
+	// agent (which misleads it into thinking it runs in that image).
+	if profile != nil && handle.Isolation != runtime.IsolationContainer {
+		profile.BaseImage = ""
+	}
+
 	// The runtime OS is only known once we've provisioned it. Fill in the
 	// system-level package manager now so the profile handed back to the
 	// agent distinguishes "no project package manager" (PackageManager

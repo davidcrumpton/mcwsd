@@ -83,12 +83,13 @@ function buildRemoteCommand(cmd, workDir, env) {
   return cmdStr;
 }
 function handleFor(account, workDir) {
+  const home = homeBase() + "/" + account;
   return {
     native_id: account,
-    work_dir: workDir,
+    work_dir: remapPath(workDir, home),
     username: account,
     privilege: "user",
-    home: homeBase() + "/" + account
+    home
   };
 }
 function destroyAccount(account, home) {

@@ -3,7 +3,6 @@ package detect
 import (
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"testing"
 
 	"github.com/davidcrumpton/mcwsd/internal"
@@ -355,11 +354,6 @@ func TestDetect_Unknown(t *testing.T) {
 		t.Errorf("InstallCommand: want %q, got %q", "", p.InstallCommand)
 	}
 	wantImage := genericToolchainImage
-	if goruntime.GOOS == "freebsd" {
-		// On FreeBSD the jail provisioner supplies the base release; the
-		// detector must not hand it a Linux container image reference.
-		wantImage = ""
-	}
 	if p.BaseImage != wantImage {
 		t.Errorf("BaseImage: want %q, got %q", wantImage, p.BaseImage)
 	}
