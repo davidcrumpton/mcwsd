@@ -81,7 +81,7 @@ the account-management commands listed in the sudoers rules below.
 
 Edit `/usr/pkg/etc/sudoers` with `visudo` (note the pkgsrc path):
 
-```
+```text
 # Up: let the daemon manage accounts only.
 _wsd ALL=(root) NOPASSWD: /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/groupadd, /usr/sbin/groupdel, /usr/sbin/userinfo, /usr/sbin/chown, /bin/rm, /bin/mkdir, /bin/test
 
@@ -106,12 +106,12 @@ cmd sh` line per workspace (fragile) or grant `permit nopass _wsd as root cmd su
 and drop with `su -m`, which **does not apply login-class resource limits**.
 Prefer sudo unless you have a reason to accept those tradeoffs.
 
-### 3.5 Define a login class (optional but recommended)
+### 3.5 Define a login class (optional)
 
 Stock NetBSD ships `/etc/login.conf` fully commented out — there is no `daemon`
 class to reuse. Define one, e.g.:
 
-```
+```text
 wsd:\
     :datasize-cur=4G:\
     :datasize-max=4G:\
@@ -129,7 +129,9 @@ verify:
    `setusercontext(3)` (`sudo` does when configured to; plain `su -m` does
    not).
 2. Login classes bound *resource limits* (fork bombs, memory, cpu). They give
-   **no** filesystem, network, or uid isolation.
+   **no** filesystem, network, or uid isolation. In testing, neither `sudo` nor
+   `doas` applied the class settings on NetBSD.  They are called `login classes` after all
+   and were historically applied at login.
 3. You can apply quotas for all workspace accounts with `quotaon -a` and `edquota`, which apply limits to all users for each quota-enabled filesystem.
 4. You can apply `sysctl -w security.curtain=1` to enable the "curtain" security feature, which helps prevent information leaks between processes.
 
