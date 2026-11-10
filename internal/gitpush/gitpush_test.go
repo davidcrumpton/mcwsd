@@ -551,3 +551,75 @@ func tempFileWithContent(t *testing.T, content string) string {
 	}
 	return f.Name()
 }
+
+// ---------------------------------------------------------------------------
+// ValidateRepoURL / GIT_ALLOW_PROTOCOL
+// ---------------------------------------------------------------------------
+
+func TestValidateRepoURL(t *testing.T) {
+	valid := []string{
+		"https://github.com/user/repo.git",
+		"http://example.com/user/repo.git",
+		"https://gitlab.example.com/group/sub/repo",
+		"git@github.com:user/repo.git",
+		"git@git.example.com:group/repo",
+	}
+	for _, url := range valid {
+		if err := ValidateRepoURL(url); err != nil {
+			t.Errorf("ValidateRepoURL(%q) = %v, want nil", url, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		" ",
+		" https://github.com/user/repo.git",
+		"https://github.com/user/repo.git ",
+		"--upload-pack=touch /tmp/pwned",
+		"-c core.pager=less",
+		"file:///etc",
+		"/home/user/repo",
+		"../repo",
+		"ssh://git@github.com/user/repo.git",
+		"ftp://example.com/repo.git",
+		"git@-host:repo",
+		"git@host:-repo",
+		"git@host:",
+		"git@:repo",
+		"git@host/path:repo",
+		"https://example.com/repo with space.git",
+	}
+	for _, url := range invalid {
+		if err := ValidateRepoURL(url); err == nil {
+			t.Errorf("ValidateRepoURL(%q) = nil, want error", url)
+		}
+	}
+}
+
+func TestGitEnv_RestrictsProtocols(t *testing.T) {
+	env := GitEnv(Config{AuthMode: AuthModeToken})
+	found := ""
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL=") {
+			found = strings.TrimPrefix(kv, "GIT_ALLOW_PROTOCOL=")
+		}
+	}
+	if found != gitAllowedProtocols {
+		t.Fatalf("GIT_ALLOW_PROTOCOL = %q, want %q", found, gitAllowedProtocols)
+	}
+
+	// The bundle-fetch override must replace the value, not duplicate it.
+	overridden := envWithAllowedProtocols(env, "file")
+	count := 0
+	for _, kv := range overridden {
+		if strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL=") {
+			count++
+			if kv != "GIT_ALLOW_PROTOCOL=file" {
+				t.Errorf("override value = %q, want file", kv)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("override left %d GIT_ALLOW_PROTOCOL entries, want 1", count)
+	}
+}

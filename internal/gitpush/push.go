@@ -90,8 +90,8 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("SSH key not readable at %s: %w", c.SSHKeyPath, err)
 			}
 		}
-		// if SSH Known Hosts path is undefined, we allow the system to follow the system 
-		// known_hosts path.  We do however, validate that if a path is defined, that it is 
+		// if SSH Known Hosts path is undefined, we allow the system to follow the system
+		// known_hosts path.  We do however, validate that if a path is defined, that it is
 		// readable.
 		if c.SSHKnownHostsPath != "" {
 			if _, err := os.Stat(c.SSHKnownHostsPath); err != nil {
@@ -221,6 +221,9 @@ func PushAndOpenMR(ctx context.Context, cfg Config, req Request) (*Result, error
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("git push config invalid: %w", err)
 	}
+	if err := ValidateRepoURL(req.RepoURL); err != nil {
+		return nil, err
+	}
 	if req.Branch == "" {
 		return nil, fmt.Errorf("branch name must be set by the server, not left empty")
 	}
@@ -261,8 +264,11 @@ func PushAndOpenMR(ctx context.Context, cfg Config, req Request) (*Result, error
 	// Fetch is data-only: it does not execute hooks or smudge/clean filters,
 	// unlike checkout or commit would. core.hooksPath is also nulled out
 	// defensively in case any future git version changes that assumption.
-	// No auth needed here — the bundle is a local file, not a remote.
-	if err := runGit(ctx, cloneDir, env, "-c", "core.hooksPath=/dev/null",
+	// No auth needed here — the bundle is a local file, not a remote. The
+	// remote-oriented protocol restriction from GitEnv would reject the local
+	// file transport, so allow only "file" for this one invocation.
+	bundleEnv := envWithAllowedProtocols(env, "file")
+	if err := runGit(ctx, cloneDir, bundleEnv, "-c", "core.hooksPath=/dev/null",
 		"fetch", bundlePath, fmt.Sprintf("%s:%s", req.Branch, req.Branch)); err != nil {
 		return nil, fmt.Errorf("failed to fetch bundle: %w", err)
 	}
@@ -334,7 +340,76 @@ func GitEnv(cfg Config) []string {
 	}
 	// Never prompt interactively — fail instead of hanging if auth is wrong.
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
+	// Only allow transports the daemon legitimately uses: HTTPS/HTTP for token
+	// auth and SSH for key auth. This blocks file:// and other local transports
+	// from being used to read arbitrary host repositories. Commands that must
+	// read a local file (the bundle fetch) override this with
+	// envWithAllowedProtocols.
+	env = append(env, "GIT_ALLOW_PROTOCOL="+gitAllowedProtocols)
 	return env
+}
+
+// gitAllowedProtocols is the transport allow-list for git subprocesses that
+// touch a remote.
+const gitAllowedProtocols = "https:http:ssh"
+
+// envWithAllowedProtocols returns a copy of env with GIT_ALLOW_PROTOCOL set to
+// protocols, replacing any existing value. Used for the one local-file git
+// invocation (fetching the bundle) that must not be restricted to the remote
+// transports.
+func envWithAllowedProtocols(env []string, protocols string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "GIT_ALLOW_PROTOCOL=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "GIT_ALLOW_PROTOCOL="+protocols)
+}
+
+// ValidateRepoURL rejects repository URLs that would be unsafe to hand to git
+// on the host. Only the transports the daemon actually uses are accepted:
+// https://, http:// and scp-style git@host:path. In particular this rejects
+// option-like values (a leading "-" would be parsed as a git option, e.g.
+// --upload-pack=...) and local paths / file:// URLs that would let a caller
+// clone an arbitrary repository on the host.
+func ValidateRepoURL(raw string) error {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return fmt.Errorf("repository URL is empty")
+	}
+	if u != raw {
+		return fmt.Errorf("repository URL %q has leading or trailing whitespace", raw)
+	}
+	if strings.HasPrefix(u, "-") {
+		return fmt.Errorf("repository URL %q must not begin with '-'", raw)
+	}
+	if strings.ContainsAny(u, "\x00\n\r\t") {
+		return fmt.Errorf("repository URL %q contains control characters", raw)
+	}
+
+	if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+		if strings.ContainsAny(u, " \t") {
+			return fmt.Errorf("repository URL %q contains whitespace", raw)
+		}
+		return nil
+	}
+
+	// scp-style SSH form: git@host:path. Reject a host or path that starts
+	// with '-' so it can never be interpreted as an option by a downstream
+	// command, and require a non-empty host and path.
+	if strings.HasPrefix(u, "git@") {
+		rest := strings.TrimPrefix(u, "git@")
+		host, path, ok := strings.Cut(rest, ":")
+		if ok && host != "" && path != "" &&
+			!strings.HasPrefix(host, "-") && !strings.HasPrefix(path, "-") &&
+			!strings.ContainsAny(host, "/ \t") && !strings.ContainsAny(path, " \t") {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unsupported repository URL %q: only https://, http:// and git@host:path are allowed", raw)
 }
 
 // gitHTTPUsername returns the basic-auth username paired with the token for

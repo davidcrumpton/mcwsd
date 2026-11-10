@@ -175,3 +175,28 @@ func TestIsPublicRepo(t *testing.T) {
 		})
 	}
 }
+
+func TestPinnedRepoURL(t *testing.T) {
+	const pinned = "https://git.example.com/group/repo.git"
+
+	got, err := pinnedRepoURL(pinned, "")
+	if err != nil || got != pinned {
+		t.Fatalf("pinnedRepoURL(pinned, \"\") = (%q, %v), want (%q, nil)", got, err, pinned)
+	}
+
+	// Echoing the exact pinned URL is allowed (backward compatibility).
+	got, err = pinnedRepoURL(pinned, pinned)
+	if err != nil || got != pinned {
+		t.Fatalf("pinnedRepoURL(pinned, pinned) = (%q, %v), want (%q, nil)", got, err, pinned)
+	}
+
+	// A different target is refused rather than silently used.
+	if _, err := pinnedRepoURL(pinned, "https://evil.example.com/other.git"); err == nil {
+		t.Fatal("pinnedRepoURL should reject a different repository")
+	}
+
+	// A workspace with no repository cannot push.
+	if _, err := pinnedRepoURL("", ""); err == nil {
+		t.Fatal("pinnedRepoURL should reject an empty workspace repository")
+	}
+}

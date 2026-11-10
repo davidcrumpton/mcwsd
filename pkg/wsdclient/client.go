@@ -165,7 +165,9 @@ func (c *Client) Artifacts(ctx context.Context, workspaceID string, paths []stri
 
 // CommitAndPRRequest is the request body for CommitAndPR(). There is
 // deliberately no branch field: the daemon chooses the branch name. There is
-// also no forge field: the forge is a daemon-level setting.
+// also no forge field: the forge is a daemon-level setting. RepoURL may echo
+// the workspace's repository URL but cannot redirect the push; a mismatch is
+// rejected. ProjectPath/GitLabProjectPath are accepted but ignored.
 type CommitAndPRRequest struct {
 	CommitMessage     string `json:"commit_message"`
 	PRTitle           string `json:"pr_title"`

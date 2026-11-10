@@ -132,10 +132,80 @@ type workspaceState struct {
 	// state kept here.
 	handle  *runtime.RuntimeHandle
 	secrets map[string]string // granted secrets for this workspace
+	// secretsMu guards secrets. Concurrent secret-bearing Exec calls must not
+	// write the map at the same time; a concurrent map write is a fatal
+	// runtime error.
+	secretsMu sync.Mutex
 	// netMu serializes connect/disconnect calls for this workspace so two
-	// concurrent network-requesting exec calls can't race each other into
+	// concurrent network-requesting callers can't race each other into
 	// leaving the container attached when it should end up disconnected.
 	netMu sync.Mutex
+	// netRefs counts the outstanding callers (sync Execs, background jobs,
+	// CommitAndPR) that require the workspace network. The network is
+	// attached on 0->1 and detached on 1->0, so overlapping users cannot
+	// disconnect it out from under each other.
+	netRefs int
+}
+
+// acquireNetwork attaches the workspace network if no other caller already
+// holds it, then records one reference. Pair every call with releaseNetwork.
+func (s *workspaceState) acquireNetwork(ctx context.Context, transport runtime.ExecTransport, wsID string) error {
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
+	if s.netRefs == 0 {
+		if err := transport.SetNetwork(ctx, true); err != nil {
+			return err
+		}
+	}
+	s.netRefs++
+	return nil
+}
+
+// releaseNetwork drops one reference and detaches the network when the last
+// caller is done. Cleanup is detached from the caller's cancellation so a
+// dropped request still returns the workspace to its network-off resting
+// state.
+func (s *workspaceState) releaseNetwork(ctx context.Context, transport runtime.ExecTransport, wsID string) {
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
+	if s.netRefs == 0 {
+		return
+	}
+	s.netRefs--
+	if s.netRefs == 0 {
+		detachNetwork(ctx, transport, wsID)
+	}
+}
+
+// recordSecret remembers that a secret is currently granted to this workspace,
+// so Destroy can revoke it if the workspace goes away while the exec is still
+// running. Guarded because concurrent Execs can grant at the same time.
+func (s *workspaceState) recordSecret(ref string) {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	if s.secrets == nil {
+		s.secrets = make(map[string]string)
+	}
+	s.secrets[ref] = "granted"
+}
+
+// forgetSecret drops the record for a secret this workspace has revoked.
+func (s *workspaceState) forgetSecret(ref string) {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	delete(s.secrets, ref)
+}
+
+// secretRefs returns a snapshot of the secrets currently recorded for the
+// workspace.
+func (s *workspaceState) secretRefs() []string {
+	s.secretsMu.Lock()
+	defer s.secretsMu.Unlock()
+	refs := make([]string, 0, len(s.secrets))
+	for ref := range s.secrets {
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 // NewBackend creates a new backend. gitCfg is the daemon-startup-time
@@ -485,37 +555,39 @@ func (b *Backend) Exec(ctx context.Context, ws *internal.Workspace, req internal
 		}
 	}
 
-	// Grant secrets
+	// Grant secrets, tracking this call's grants in a local slice so exactly
+	// they (and no other call's secrets) are revoked. The defer is registered
+	// before the first grant so a partial failure still revokes what was
+	// granted.
+	var granted []string
+	defer func() {
+		revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		for _, secretRef := range granted {
+			if err := b.secretBroker.Revoke(revokeCtx, ws.ID, secretRef); err != nil {
+				logger.Warn("secret_revoke_failed", "workspace_id", ws.ID, "secret", secretRef, "error", err)
+			}
+			wsState.forgetSecret(secretRef)
+		}
+	}()
 	for _, secretRef := range req.Secrets {
 		if err := b.secretBroker.Grant(ctx, ws.ID, secretRef, time.Duration(req.TimeoutSeconds)*time.Second); err != nil {
 			return nil, fmt.Errorf("failed to grant secret %s: %w", secretRef, err)
 		}
-		wsState.secrets[secretRef] = "granted"
+		granted = append(granted, secretRef)
+		wsState.recordSecret(secretRef)
 	}
-
-	// Defer revoke
-	defer func() {
-		for secretRef := range wsState.secrets {
-			if err := b.secretBroker.Revoke(ctx, ws.ID, secretRef); err != nil {
-				logger.Warn("secret_revoke_failed", "workspace_id", ws.ID, "secret", secretRef, "error", err)
-			}
-		}
-	}()
 
 	// Network is off by default (disconnected at the end of Provision).
 	// Only reattach for the duration of this exec call if explicitly
 	// requested, and always disconnect again afterward so the workspace
-	// returns to its network-off resting state.
+	// returns to its network-off resting state. Reference counting keeps a
+	// concurrent background job's network attached until it too finishes.
 	if req.AllowNetwork {
-		wsState.netMu.Lock()
-		if err := wsState.handle.Transport.SetNetwork(ctx, true); err != nil {
-			wsState.netMu.Unlock()
+		if err := wsState.acquireNetwork(ctx, wsState.handle.Transport, ws.ID); err != nil {
 			return nil, fmt.Errorf("failed to attach network for exec: %w", err)
 		}
-		defer func() {
-			detachNetwork(ctx, wsState.handle.Transport, ws.ID)
-			wsState.netMu.Unlock()
-		}()
+		defer wsState.releaseNetwork(ctx, wsState.handle.Transport, ws.ID)
 	}
 
 	// Bound the command with a deadline when the caller supplied one. Without
@@ -737,35 +809,33 @@ func (b *Backend) CommitAndPR(ctx context.Context, ws *internal.Workspace, req i
 	// are isolated from the host, so their network state has no bearing on
 	// the daemon's own push and is left untouched.
 	if wsState.handle.Isolation == runtime.IsolationJail {
-		wsState.netMu.Lock()
-		defer wsState.netMu.Unlock()
-		if err := wsState.handle.Transport.SetNetwork(ctx, true); err != nil {
+		if err := wsState.acquireNetwork(ctx, wsState.handle.Transport, ws.ID); err != nil {
 			return nil, fmt.Errorf("failed to attach network for commit and PR: %w", err)
 		}
-		defer func() {
-			detachNetwork(ctx, wsState.handle.Transport, ws.ID)
-		}()
+		defer wsState.releaseNetwork(ctx, wsState.handle.Transport, ws.ID)
 	}
 
-	// Use req.RepoURL if provided, otherwise fall back to workspace's RepoURL
-	repoURL := req.RepoURL
-	if repoURL == "" {
-		repoURL = wsState.workspace.Spec.RepoURL
+	// The push target is pinned to the repository the workspace was
+	// provisioned from (persisted in the state file and reconstructed on
+	// recovery). A request may echo that URL for compatibility, but it can
+	// never override it: a mismatch is rejected rather than silently pushing
+	// somewhere else with the daemon's forge credentials.
+	repoURL, err := pinnedRepoURL(wsState.workspace.Spec.RepoURL, req.RepoURL)
+	if err != nil {
+		return nil, err
 	}
 
-	projectPath := req.ProjectPath
-	if projectPath == "" {
-		projectPath = req.GitLabProjectPath
-	}
+	// ProjectPath is likewise a daemon-level setting. Per-request project
+	// paths are deliberately ignored so an agent cannot open the MR against a
+	// different project than the one the branch was pushed to; the forge
+	// falls back to the configured path and then derives it from repoURL.
 	pushResult, err := gitpush.PushAndOpenMR(ctx, b.gitPushConfig, gitpush.Request{
-		RepoURL:           repoURL,
-		BaseBranch:        wsState.workspace.Spec.Ref,
-		Branch:            branch,
-		Bundle:            bundleBytes,
-		Title:             req.PRTitle,
-		Description:       req.PRDescription,
-		ProjectPath:       projectPath,
-		GitLabProjectPath: req.GitLabProjectPath,
+		RepoURL:     repoURL,
+		BaseBranch:  wsState.workspace.Spec.Ref,
+		Branch:      branch,
+		Bundle:      bundleBytes,
+		Title:       req.PRTitle,
+		Description: req.PRDescription,
 	})
 	if err != nil {
 		return nil, err
@@ -829,8 +899,9 @@ func (b *Backend) Destroy(ctx context.Context, ws *internal.Workspace) error {
 		return nil // Already destroyed or never existed
 	}
 
-	// Revoke all secrets
-	for secretRef := range wsState.secrets {
+	// Revoke all secrets. Take a snapshot under the workspace's secret lock
+	// because a concurrent Exec may still be granting or revoking.
+	for _, secretRef := range wsState.secretRefs() {
 		if err := b.secretBroker.Revoke(ctx, ws.ID, secretRef); err != nil {
 			logger.Warn("secret_revoke_failed", "workspace_id", ws.ID, "secret", secretRef, "error", err)
 		}
@@ -896,6 +967,21 @@ func (b *Backend) SafeEdit(ctx context.Context, ws *internal.Workspace, filePath
 
 // Helper functions
 
+// pinnedRepoURL returns the repository the workspace was provisioned from — the
+// only target commit_and_pr may push to — and rejects a request that tries to
+// substitute a different repository. The pinned URL is persisted in the state
+// file at provision time and restored when a workspace is recovered.
+func pinnedRepoURL(workspaceRepoURL, requested string) (string, error) {
+	pinned := strings.TrimSpace(workspaceRepoURL)
+	if pinned == "" {
+		return "", fmt.Errorf("workspace was not provisioned from a repository; commit_and_pr requires one")
+	}
+	if requested != "" && strings.TrimSpace(requested) != pinned {
+		return "", fmt.Errorf("commit_and_pr target %q does not match the workspace's repository %q", requested, pinned)
+	}
+	return pinned, nil
+}
+
 func generateWorkspaceID() string {
 	return fmt.Sprintf("ws-%x", sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano()))))[:12]
 }
@@ -930,12 +1016,17 @@ func slugify(s string) string {
 }
 
 func cloneRepo(ctx context.Context, dir, url, ref string, gitCfg gitpush.Config) error {
+	if err := gitpush.ValidateRepoURL(url); err != nil {
+		return err
+	}
 	args := append([]string{}, gitpush.GitAuthArgs(gitCfg, url)...)
 	args = append(args, "clone", "--depth", "1")
 	if ref != "" {
 		args = append(args, "--branch", ref)
 	}
-	args = append(args, url, dir)
+	// "--" terminates option parsing so a URL can never be interpreted as a
+	// git flag (e.g. --upload-pack=...).
+	args = append(args, "--", url, dir)
 
 	cmd := execCommandContext(ctx, "git", args...)
 	cmd.Env = gitpush.GitEnv(gitCfg)

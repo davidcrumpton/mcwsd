@@ -430,7 +430,9 @@ func (s *Server) handleSafeEdit(w http.ResponseWriter, r *http.Request) {
 // Note there is no branch field — the branch name is chosen server-side
 // (see backend.Backend.CommitAndPR) so a workspace can never target an
 // existing branch or another workspace's branch. There is likewise no
-// forge field: the forge is a daemon-level setting.
+// forge field: the forge is a daemon-level setting. repo_url may echo the
+// workspace's repository (a mismatch is rejected) but cannot redirect the push;
+// project_path/gitlab_project_path are accepted but ignored for compatibility.
 type CommitAndPRRequest struct {
 	CommitMessage     string `json:"commit_message"`
 	PRTitle           string `json:"pr_title"`

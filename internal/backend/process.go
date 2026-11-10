@@ -33,6 +33,26 @@ const jobStartTimeout = 15 * time.Second
 // SIGKILL to the job's process group.
 const jobKillGrace = 3 * time.Second
 
+// Conventional exit codes reported for jobs that the daemon terminated itself
+// rather than one that exited on its own (see signal(7) and timeout(1)).
+const (
+	exitCodeTimedOut  = 124
+	exitCodeCancelled = 137
+)
+
+// exitCodeForTerminal returns the exit code to record when the daemon forces a
+// job into the given terminal status.
+func exitCodeForTerminal(status internal.ProcessStatus) int {
+	switch status {
+	case internal.ProcessTimedOut:
+		return exitCodeTimedOut
+	case internal.ProcessCancelled:
+		return exitCodeCancelled
+	default:
+		return 1
+	}
+}
+
 // maxProcessReadBytes caps how much output a single status read pulls out of
 // the runtime, so one poll cannot return an unbounded amount. Polling
 // continues from the returned cursor.
@@ -413,15 +433,17 @@ func (b *Backend) reconcileProcess(ctx context.Context, wsState *workspaceState,
 	case processStateDone:
 		switch proc.status {
 		case internal.ProcessCancelled, internal.ProcessTimedOut:
-			// Keep the explicit terminal reason.
+			// Keep the explicit terminal reason and the conventional exit
+			// code set by cancelProcess rather than overwriting them with the
+			// shell's signal-derived rc.
 		default:
+			proc.exitCode = code
 			if code == 0 {
 				proc.status = internal.ProcessSucceeded
 			} else {
 				proc.status = internal.ProcessFailed
 			}
 		}
-		proc.exitCode = code
 		terminal = true
 	case processStateGone:
 		switch proc.status {
@@ -572,9 +594,7 @@ func detachProcessNetwork(ctx context.Context, wsState *workspaceState, proc *ma
 	if !allow {
 		return
 	}
-	wsState.netMu.Lock()
-	detachNetwork(ctx, wsState.handle.Transport, wsState.workspace.ID)
-	wsState.netMu.Unlock()
+	wsState.releaseNetwork(ctx, wsState.handle.Transport, wsState.workspace.ID)
 }
 
 // StartProcess launches a command inside the workspace as a tracked background
@@ -622,12 +642,10 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 
 	// A network-enabled job needs the workspace attached for its whole
 	// lifetime, not just for the launch call; it is detached when the job
-	// reaches a terminal state.
+	// reaches a terminal state. The reference is held until then so a
+	// concurrent Exec can't detach it early.
 	if req.AllowNetwork {
-		wsState.netMu.Lock()
-		err := transport.SetNetwork(ctx, true)
-		wsState.netMu.Unlock()
-		if err != nil {
+		if err := wsState.acquireNetwork(ctx, transport, ws.ID); err != nil {
 			return nil, fmt.Errorf("failed to attach network for job: %w", err)
 		}
 	}
@@ -652,9 +670,7 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 	if _, err := transport.Exec(ctx, []string{"sh", "-c", launch}, wsState.handle.WorkDir, nil); err != nil {
 		logger.Warn("process_start_failed", "workspace_id", ws.ID, "process_id", pid, "error", err)
 		if req.AllowNetwork {
-			wsState.netMu.Lock()
-			detachNetwork(ctx, transport, ws.ID)
-			wsState.netMu.Unlock()
+			wsState.releaseNetwork(ctx, transport, ws.ID)
 		}
 		return nil, fmt.Errorf("failed to launch job: %w", err)
 	}
@@ -819,6 +835,10 @@ func (b *Backend) execAsJob(ctx context.Context, wsState *workspaceState, ws *in
 
 		select {
 		case <-ctx.Done():
+			// The caller went away before the foreground job finished. Kill
+			// it rather than leaving an orphan that is exempt from the job
+			// limits and may run forever.
+			b.cancelProcess(wsState, proc, internal.ProcessCancelled)
 			return nil, ctx.Err()
 		case <-time.After(execPromotePollInterval):
 		}
@@ -1033,12 +1053,27 @@ func (b *Backend) KillProcess(ctx context.Context, ws *internal.Workspace, proce
 // cancelProcess signals a job's process group and marks it with the given
 // terminal status. It is safe to call more than once; the first caller wins.
 func (b *Backend) cancelProcess(wsState *workspaceState, proc *managedProcess, terminal internal.ProcessStatus) {
+	// Probe before overriding: a job may have already finished (successfully)
+	// between the last status poll and this cancel/timeout. Recording it as
+	// cancelled or timed out would destroy a real result.
+	probeCtx, probeCancel := context.WithTimeout(context.Background(), jobKillGrace+30*time.Second)
+	done, probeErr := b.reconcileProcess(probeCtx, wsState, proc)
+	probeCancel()
+	if probeErr != nil {
+		logger.Warn("process_cancel_probe_failed", "process_id", proc.id, "error", probeErr)
+	}
+	if done {
+		return
+	}
+
 	proc.mu.Lock()
+	// A probe or another canceller may have won the race while we probed.
 	if isTerminalProcessStatus(proc.status) {
 		proc.mu.Unlock()
 		return
 	}
 	proc.status = terminal
+	proc.exitCode = exitCodeForTerminal(terminal)
 	proc.endedAt = time.Now()
 	jobDir := proc.jobDir
 	needDetach := proc.markFinalizedLocked()
@@ -1265,10 +1300,23 @@ func (b *Backend) finalizeJobsForWorkspace(ctx context.Context, wsState *workspa
 	}
 	b.procMu.Unlock()
 
+	// Probe before finalizing: a job that succeeded but was never polled must
+	// be recorded as succeeded, not interrupted. The runtime is still up at
+	// this point (callers finalize before tearing it down); use a context not
+	// tied to the caller so a cancelled request still gets the real result.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
 	for _, proc := range procs {
+		if done, err := b.reconcileProcess(probeCtx, wsState, proc); err != nil {
+			logger.Warn("process_finalize_probe_failed", "process_id", proc.id, "error", err)
+		} else if done {
+			// reconcileProcess already captured and persisted the real result.
+			continue
+		}
 		proc.mu.Lock()
 		if !isTerminalProcessStatus(proc.status) {
 			proc.status = internal.ProcessFailed
+			proc.exitCode = exitCodeForTerminal(internal.ProcessFailed)
 			proc.endedAt = time.Now()
 			if proc.timer != nil {
 				proc.timer.Stop()
@@ -1276,6 +1324,6 @@ func (b *Backend) finalizeJobsForWorkspace(ctx context.Context, wsState *workspa
 			proc.finalized = true
 		}
 		proc.mu.Unlock()
-		b.finalizeJobRecord(ctx, wsState, proc)
+		b.finalizeJobRecord(probeCtx, wsState, proc)
 	}
 }

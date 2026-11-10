@@ -161,10 +161,20 @@ type EnvironmentProfile struct {
 // (including main) or collide with another workspace's branch. The forge is
 // likewise a daemon-level setting, not a request field.
 type CommitAndPRRequest struct {
-	CommitMessage     string `json:"commit_message"`
-	PRTitle           string `json:"pr_title"`
-	PRDescription     string `json:"pr_description,omitempty"`
-	RepoURL           string `json:"repo_url,omitempty"`
+	CommitMessage string `json:"commit_message"`
+	PRTitle       string `json:"pr_title"`
+	PRDescription string `json:"pr_description,omitempty"`
+
+	// RepoURL may echo the workspace's repository URL but can never change
+	// the push target: a value that doesn't match the URL the workspace was
+	// provisioned from is rejected. Leaving it empty uses the pinned URL.
+	RepoURL string `json:"repo_url,omitempty"`
+
+	// ProjectPath and GitLabProjectPath are accepted for backward
+	// compatibility but deliberately ignored. The project is a daemon-level
+	// setting (or derived from the pinned repository URL), so a request can't
+	// open the merge request against a different project than the branch was
+	// pushed to.
 	ProjectPath       string `json:"project_path,omitempty"`
 	GitLabProjectPath string `json:"gitlab_project_path,omitempty"`
 }

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -326,4 +327,42 @@ func TestPersistence_RemovePersistedOnDisk(t *testing.T) {
 	if _, ok := s2.Get("ws-b"); !ok {
 		t.Error("remaining entry ws-b missing after reload")
 	}
+}
+
+func TestPIDLockExcludesSecondOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json.lock")
+
+	lock, err := AcquirePIDLock(path)
+	if err != nil {
+		t.Fatalf("AcquirePIDLock: %v", err)
+	}
+
+	// A second acquisition (as cleanup/status would do) must refuse while the
+	// first is held by this live process.
+	if _, err := AcquirePIDLock(path); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second AcquirePIDLock error = %v, want ErrLocked", err)
+	}
+
+	if err := lock.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// After release the path can be acquired again.
+	again, err := AcquirePIDLock(path)
+	if err != nil {
+		t.Fatalf("AcquirePIDLock after close: %v", err)
+	}
+	again.Close()
+}
+
+func TestPIDLockReclaimsStaleFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json.lock")
+	// A pid that cannot be alive (above the usual max).
+	if err := os.WriteFile(path, []byte("999999999\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := AcquirePIDLock(path)
+	if err != nil {
+		t.Fatalf("AcquirePIDLock should reclaim a stale lock: %v", err)
+	}
+	lock.Close()
 }

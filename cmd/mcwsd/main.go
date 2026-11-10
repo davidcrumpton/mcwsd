@@ -31,7 +31,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.362"
+	Version         = "0.4.366"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -392,6 +392,15 @@ func runDaemon(
 	execWaitSeconds int,
 	provisionWaitSeconds int, provisionTimeout time.Duration,
 ) error {
+	// Hold a pid lock for the daemon's lifetime so cleanup/status can tell
+	// that the state file is owned by a live daemon and refuse to treat its
+	// workspaces as leftovers.
+	daemonLock, err := state.AcquirePIDLock(stateFile + ".lock")
+	if err != nil {
+		return fmt.Errorf("refusing to start daemon: %w", err)
+	}
+	defer daemonLock.Close()
+
 	// Session ID: one random ID per daemon run, stamped on every workspace
 	// this run creates. It's how a future run (or cleanup) tells "created by
 	// the currently running daemon" apart from "leftover from a run that got
@@ -612,22 +621,11 @@ func runDaemon(
 	// Create API server
 	server := api.NewServer(backend, authToken)
 
-	var httpServer *http.Server
-
-	if tlsCertFile != "" && tlsKeyFile != "" {
-		internal.Log.Info("starting_tls_server", "address", bindAddress, "port", port, "tls_cert_file", tlsCertFile, "tls_key_file", tlsKeyFile)
-		httpServer = &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler: server,
-		}
-		if err := httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile); err != nil {
-			return fmt.Errorf("TLS server error: %w", err)
-		}
-	} else {
-		httpServer = &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", bindAddress, port),
-			Handler: server,
-		}
+	tlsEnabled := tlsCertFile != "" && tlsKeyFile != ""
+	httpServer := &http.Server{
+		Addr:              fmt.Sprintf("%s:%d", bindAddress, port),
+		Handler:           server,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Graceful shutdown
@@ -639,9 +637,19 @@ func runDaemon(
 	pruneCtx, pruneCancel := context.WithCancel(context.Background())
 	defer pruneCancel()
 
+	// Start the server in a goroutine for both TLS and plain HTTP. Doing the
+	// TLS ListenAndServeTLS synchronously here used to skip the signal
+	// handler and pruner entirely in TLS mode, so the daemon could not shut
+	// down gracefully or reap stale workspaces.
 	go func() {
-		internal.Log.UnsanitizedInfo("server_starting", "address", bindAddress, "port", port, "auth_token_set", authToken != "")
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		internal.Log.UnsanitizedInfo("server_starting", "address", bindAddress, "port", port, "auth_token_set", authToken != "", "tls", tlsEnabled)
+		var err error
+		if tlsEnabled {
+			err = httpServer.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+		} else {
+			err = httpServer.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			internal.Log.Error("server_error", "error", err)
 			os.Exit(1)
 		}
@@ -755,6 +763,15 @@ func runCleanup(stateFile, jobsFile string, workspaceTTL, jobRetention time.Dura
 	if !doOrphans && !doPrune {
 		return fmt.Errorf("specify at least one of --orphans or --prune")
 	}
+
+	// Refuse to run against a state file owned by a live daemon: a fresh
+	// session ID would make every one of the daemon's live workspaces look
+	// like an orphan.
+	lock, err := state.AcquirePIDLock(stateFile + ".lock")
+	if err != nil {
+		return fmt.Errorf("refusing to run cleanup: %w", err)
+	}
+	defer lock.Close()
 
 	sessionID, err := generateSessionID()
 	if err != nil {
@@ -883,6 +900,13 @@ func newStatusCmd() *cobra.Command {
 }
 
 func runStatus(stateFile string) error {
+	// Refuse to report a live daemon's workspaces as leftovers.
+	lock, err := state.AcquirePIDLock(stateFile + ".lock")
+	if err != nil {
+		return fmt.Errorf("refusing to read status: %w", err)
+	}
+	defer lock.Close()
+
 	sessionID, err := generateSessionID()
 	if err != nil {
 		return fmt.Errorf("failed to generate session id: %w", err)

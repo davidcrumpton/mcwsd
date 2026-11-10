@@ -255,6 +255,13 @@ func TestBackgroundJobCancelKeepsRecord(t *testing.T) {
 	if cursor != "done" {
 		t.Fatalf("cursor after terminal = %q, want done", cursor)
 	}
+	cancelled, err := b.GetProcessStatus(ctx, ws, info.ID, cursor)
+	if err != nil {
+		t.Fatalf("GetProcessStatus after cancel: %v", err)
+	}
+	if cancelled.ExitCode != exitCodeCancelled {
+		t.Fatalf("cancelled exit code = %d, want %d", cancelled.ExitCode, exitCodeCancelled)
+	}
 
 	// The record must remain queryable after cancellation.
 	res, err := b.GetProcessStatus(ctx, ws, info.ID, cursor)
@@ -422,9 +429,16 @@ func TestBackgroundJobTimeout(t *testing.T) {
 		t.Fatalf("StartProcess: %v", err)
 	}
 
-	status, _, _ := pollProcess(t, b, ws, info.ID, "")
+	status, cursor, _ := pollProcess(t, b, ws, info.ID, "")
 	if status != internal.ProcessTimedOut {
 		t.Fatalf("status after timeout = %q, want timed_out", status)
+	}
+	res, err := b.GetProcessStatus(ctx, ws, info.ID, cursor)
+	if err != nil {
+		t.Fatalf("GetProcessStatus after timeout: %v", err)
+	}
+	if res.ExitCode != exitCodeTimedOut {
+		t.Fatalf("timed-out exit code = %d, want %d", res.ExitCode, exitCodeTimedOut)
 	}
 }
 
@@ -903,5 +917,138 @@ func TestExecAsyncWithSecretsRejected(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("async exec with secrets should be rejected")
+	}
+}
+
+func TestUnpolledFinishedJobFinalizedSucceeded(t *testing.T) {
+	b, ws := newJobTestBackendWithStore(t, jobs.Limits{})
+	ctx := context.Background()
+	ft := b.workspaces["ws-test"].handle.Transport.(*localTransport)
+
+	info, err := b.StartProcess(ctx, ws, internal.StartProcessRequest{Command: "printf 'ok\\n'"})
+	if err != nil {
+		t.Fatalf("StartProcess: %v", err)
+	}
+
+	// Wait for the job to finish without polling it through the API, so the
+	// in-memory status never leaves "queued"/"running".
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(ft.root, info.ID, "exit_code")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("job did not finish in time")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// Destroy/prune calls finalizeJobsForWorkspace before tearing the runtime
+	// down. It must probe first and preserve the real result.
+	b.finalizeJobsForWorkspace(ctx, b.workspaces[ws.ID])
+
+	e, ok := b.jobStore.Get(info.ID)
+	if !ok {
+		t.Fatal("job record missing after finalize")
+	}
+	if e.Status != internal.ProcessSucceeded {
+		t.Fatalf("unpolled finished job recorded as %q, want succeeded", e.Status)
+	}
+	if e.ExitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", e.ExitCode)
+	}
+}
+
+func TestExecCancelKillsForegroundJob(t *testing.T) {
+	b, ws := newJobTestBackendWithStore(t, jobs.Limits{})
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := b.Exec(ctx, ws, internal.ExecRequest{
+			Command:     "sleep 30",
+			WaitSeconds: 60,
+		})
+		errCh <- err
+	}()
+
+	// Wait until the promoted foreground job is registered.
+	var id string
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		b.procMu.Lock()
+		for key := range b.processes {
+			id = strings.TrimPrefix(key, ws.ID+"/")
+		}
+		b.procMu.Unlock()
+		if id != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("job was never registered")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("Exec returned success after the context was cancelled")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Exec did not return after cancellation")
+	}
+
+	status, _, _ := pollProcess(t, b, ws, id, "")
+	if status != internal.ProcessCancelled {
+		t.Fatalf("status after client cancel = %q, want cancelled", status)
+	}
+}
+
+func TestNetworkReferenceCounting(t *testing.T) {
+	b, ws := newJobTestBackend(t)
+	ft := b.workspaces["ws-test"].handle.Transport.(*localTransport)
+	ctx := context.Background()
+
+	info, err := b.StartProcess(ctx, ws, internal.StartProcessRequest{
+		Command:      "sleep 30",
+		AllowNetwork: true,
+	})
+	if err != nil {
+		t.Fatalf("StartProcess: %v", err)
+	}
+	defer b.KillProcess(context.Background(), ws, info.ID)
+
+	for i := 0; i < 100; i++ {
+		res, err := b.GetProcessStatus(ctx, ws, info.ID, "")
+		if err != nil {
+			t.Fatalf("GetProcessStatus: %v", err)
+		}
+		if res.Status == internal.ProcessRunning {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// A concurrent network-enabled exec finishing must not detach the network
+	// that the background job still needs.
+	if _, err := b.Exec(ctx, ws, internal.ExecRequest{Command: "printf hi", AllowNetwork: true}); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	calls := ft.networkCalls()
+	if len(calls) == 0 || !calls[len(calls)-1] {
+		t.Fatalf("network was detached while a background job still held it: %v", calls)
+	}
+
+	// Once the job is cancelled and the last reference is released, the
+	// network is detached exactly once.
+	if err := b.KillProcess(ctx, ws, info.ID); err != nil {
+		t.Fatalf("KillProcess: %v", err)
+	}
+	pollProcess(t, b, ws, info.ID, "")
+	calls = ft.networkCalls()
+	if len(calls) == 0 || calls[len(calls)-1] {
+		t.Fatalf("network not detached after the last reference was released: %v", calls)
 	}
 }
