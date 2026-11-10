@@ -9,14 +9,14 @@ See the [OpenWebUI Examples](./examples/OpenWebUI.md) directory for usage instru
 ## Requirements
 
 - Go 1.25 or later
-- Docker, Podman, or Kubernetes (for container support)
+- Docker, Podman, Kubernetes, or Apple Container (for container support)
 - FreeBSD or OpenBSD (for jail/VMD support)
 - OpenIndiana/illumos (for zones support)
 
 ## Features
 
 - **Automated Environment Detection**: Automatically detects project types including Go, Rust, Python (via `pyproject.toml` or `requirements.txt`), and Node.js (via `package.json`). Supports `.devcontainer` configurations.
-- **Sandboxed Execution**: Utilizes OCI containers (docker, podman, kubernetes), FreeBSD jails, OpenBSD VMD, and OpenIndiana/illumos zones for sandboxed execution.
+- **Sandboxed Execution**: Utilizes OCI containers (docker, podman, Apple Container, kubernetes), FreeBSD jails, OpenBSD VMD, and OpenIndiana/illumos zones for sandboxed execution.
 - **Smart Caching**: Implements a high-performance caching mechanism based on dependency manifests (e.g., `go.sum`, `package-lock.json`) to skip redundant dependency installations.
 - **Secure Secret Injection**: Provides short-lived, single-use environment variable injection for sensitive credentials during command execution.
 - **Artifact Retrieval**: Easily retrieve changes from workspaces via unified `git diff` patches and untracked file lists.
@@ -44,7 +44,7 @@ mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --deb
 Before running the daemon, ensure you have:
 
 - [Go](https://go.dev/) (1.21+)
-- [Docker](https://www.docker.com/) or Podman (3.4+)
+- [Docker](https://www.docker.com/), Podman (3.4+), or Apple Container (macOS)
 - [Kubernetes](https://kubernetes.io/) (optional, need kubeconfig and kubectl for Kubernetes support)
 
 > **Note:** For alternative runtimes:

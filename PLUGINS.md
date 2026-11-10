@@ -7,9 +7,9 @@ Kubernetes, and anything else. It runs inside the daemon in a `goja` VM and is
 given a small, reviewable host API instead of raw access to the machine.
 
 The native Go backends in `internal/backend/*` have been ported to these
-plugins one at a time; `podman`, `docker`, `kubernetes`, `openbsd-vmd`,
-`freebsd-jail`, `zones`, `netbsd-account`, and `proxmox-lxc` are all available
-in `plugins/`.
+plugins one at a time; `podman`, `docker`, `apple-container`, `kubernetes`,
+`openbsd-vmd`, `freebsd-jail`, `zones`, `netbsd-account`, and `proxmox-lxc` are
+all available in `plugins/`.
 
 ## One plugin per daemon instance
 
@@ -189,6 +189,7 @@ to the plugin's vitest suite as each runtime is migrated.
 
 - `plugins/podman.js` — `plugins/podman/plugin.ts` (simplest CLI runtime, no options).
 - `plugins/docker.js` — `plugins/docker/plugin.ts` (demonstrates `options`, `setNetwork`, `bootstrapCmd`).
+- `plugins/apple-container.js` — `plugins/apple-container/plugin.ts` (Apple's macOS OCI runtime: the same CLI shape as docker, but network attachments are fixed at container create time, so `container-network` selects the attachment and `setNetwork` is a no-op).
 - `plugins/kubernetes.js` — `plugins/kubernetes/plugin.ts` (demonstrates `init`, `recover`, a poll-based `provision`, and shell-quoted `execArgs` through `kubectl exec ... -- sh -c`).
 - `plugins/openbsd-vmd.js` — `plugins/openbsd-vmd/plugin.ts` (a VM runtime: SSH transport via `execArgs`, a three-stage readiness poll, host/guest escalation, and a per-handle `os` override).
 - `plugins/freebsd-jail.js` — `plugins/freebsd-jail/plugin.ts` (a jail runtime: `jexec` transport, shared/VNET networking, the reserved `ip-base-network`/`ip-pool-size` pool, `base.txz` + template download via `host.fetch` with Basic/header auth and OpenPGP signature verification).
