@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/davidcrumpton/mcwsd/internal"
@@ -21,16 +20,14 @@ import (
 // plugin's execArgs pure function. Core owns ReadFile, WriteFile, CopyDirIn and
 // Bootstrap; the plugin only describes how to turn (handle, argv, workDir, env)
 // into the host command line that runs it.
+//
+// Note: the goja VM used by execArgs/bootstrapCmd is shared by every handle in
+// the process, so serialization lives on Runtime.transport.mu, not here.
 type ExecTransport struct {
 	runtime     *Runtime
 	provisioner *Provisioner
 	nativeID    string
 	handle      map[string]interface{}
-
-	// mu serializes access to the shared transport VM. goja VMs are not safe
-	// for concurrent calls, and execArgs is the only operation that touches it;
-	// the actual command execution happens in Go, outside the lock.
-	mu sync.Mutex
 }
 
 var (
@@ -56,8 +53,8 @@ var (
 // mangling). When the plugin supplies a stdin payload it overrides the data
 // stdin core would otherwise stream.
 func (t *ExecTransport) execArgs(cmd []string, workDir string, env []string, stdin, root bool) ([]string, *string, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.runtime.transport.mu.Lock()
+	defer t.runtime.transport.mu.Unlock()
 	vm := t.runtime.transport.vm
 	out, err := t.runtime.transport.execArgs(goja.Undefined(),
 		vm.ToValue(t.handle),
@@ -239,10 +236,10 @@ func (t *ExecTransport) Bootstrap(ctx context.Context, workDir string) error {
 	if t.runtime.transport.bootstrapCmd == nil {
 		return nil
 	}
-	t.mu.Lock()
+	t.runtime.transport.mu.Lock()
 	vm := t.runtime.transport.vm
 	out, err := t.runtime.transport.bootstrapCmd(goja.Undefined(), vm.ToValue(t.handle), vm.ToValue(workDir))
-	t.mu.Unlock()
+	t.runtime.transport.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("bootstrapCmd: %w", err)
 	}

@@ -72,7 +72,10 @@ func (p *Provisioner) Validate(ctx context.Context) error {
 }
 
 func (p *Provisioner) Provision(ctx context.Context, spec runtime.ProvisionSpec) (*runtime.RuntimeHandle, error) {
-	cs := p.newCall(ctx)
+	cs, err := p.newCall(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer cs.cleanup()
 
 	handle, err := p.callValue(cs, "provision", specToJS(spec))
@@ -102,7 +105,10 @@ func (p *Provisioner) DestroyWorkspaceByID(ctx context.Context, workspaceID stri
 }
 
 func (p *Provisioner) RecoverHandle(ctx context.Context, nativeID string, workDir string) (*runtime.RuntimeHandle, error) {
-	cs := p.newCall(ctx)
+	cs, err := p.newCall(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer cs.cleanup()
 
 	val, err := p.callValue(cs, "recover", nativeID, workDir)
@@ -126,9 +132,12 @@ func (p *Provisioner) newTransport(nativeID string, handle map[string]interface{
 // argv function cannot (e.g. docker network connect on an already-attached
 // container).
 func (p *Provisioner) setNetwork(ctx context.Context, handle map[string]interface{}, enabled bool) error {
-	cs := p.newCall(ctx)
+	cs, err := p.newCall(ctx)
+	if err != nil {
+		return err
+	}
 	defer cs.cleanup()
-	_, err := p.callValue(cs, "setNetwork", handle, enabled)
+	_, err = p.callValue(cs, "setNetwork", handle, enabled)
 	return err
 }
 
@@ -139,7 +148,12 @@ func (p *Provisioner) CleanupOrphans(ctx context.Context, keep map[string]bool) 
 			names = append(names, name)
 		}
 	}
-	val, err := p.callValue(p.newCall(ctx), "cleanupOrphans", names)
+	cs, err := p.newCall(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer cs.cleanup()
+	val, err := p.callValue(cs, "cleanupOrphans", names)
 	if err != nil {
 		return 0, err
 	}
@@ -152,10 +166,13 @@ func (p *Provisioner) CleanupOrphans(ctx context.Context, keep map[string]bool) 
 
 // --- dispatch ---
 
-func (p *Provisioner) newCall(ctx context.Context) *callState {
+func (p *Provisioner) newCall(ctx context.Context) (*callState, error) {
+	// Never fall back to a shared temp root here: callState.cleanup does an
+	// os.RemoveAll(scratchRoot), so a fallback to os.TempDir() would delete the
+	// host's entire temp directory on any provision/exec after MkdirTemp fails.
 	scratch, err := os.MkdirTemp("", "wsd-plugin-*")
 	if err != nil {
-		scratch = os.TempDir()
+		return nil, fmt.Errorf("create plugin scratch dir: %w", err)
 	}
 	return &callState{
 		ctx:         ctx,
@@ -163,16 +180,19 @@ func (p *Provisioner) newCall(ctx context.Context) *callState {
 		binaries:    p.runtime.binaries,
 		ipam:        p.ipam,
 		scratchRoot: scratch,
-	}
+	}, nil
 }
 
 // call invokes an optional lifecycle function that returns nothing of interest
 // (init, validate, destroy, destroyByID, destroyWorkspaceByID). A missing
 // function is a no-op so a plugin may omit optional steps.
 func (p *Provisioner) call(ctx context.Context, name string, args ...interface{}) error {
-	cs := p.newCall(ctx)
+	cs, err := p.newCall(ctx)
+	if err != nil {
+		return err
+	}
 	defer cs.cleanup()
-	_, err := p.callValue(cs, name, args...)
+	_, err = p.callValue(cs, name, args...)
 	if err != nil {
 		cs.unwind()
 	}

@@ -139,7 +139,7 @@ func (b *Backend) saveProvisionEntry(job *provisionJob) {
 // provision job, and runs the whole pipeline in a detached goroutine so it
 // survives the calling request being cancelled or the client disconnecting.
 // timeout, when > 0, bounds the pipeline and marks it timed_out if exceeded.
-func (b *Backend) startProvisionJob(ctx context.Context, spec internal.WorkspaceSpec, timeout time.Duration) *provisionJob {
+func (b *Backend) startProvisionJob(ctx context.Context, spec internal.WorkspaceSpec, timeout time.Duration) (*provisionJob, error) {
 	wsID := generateWorkspaceID()
 	jobID := fmt.Sprintf("prov-%x", sha256.Sum256([]byte(fmt.Sprintf("%s-%d", wsID, time.Now().UnixNano()))))[:12]
 
@@ -151,7 +151,20 @@ func (b *Backend) startProvisionJob(ctx context.Context, spec internal.Workspace
 		startedAt:   time.Now(),
 	}
 
+	// Provisioning pipelines count against the daemon-wide job limit (they did
+	// not before, so async provisions could spawn unbounded runtimes). Check
+	// and insert under provMu so two concurrent provisions cannot both slip
+	// past the same slot. activeJobCounts only nests procMu under provMu;
+	// no path takes them in the opposite order.
 	b.provMu.Lock()
+	if b.jobLimits.MaxTotal > 0 {
+		shellActive, _ := b.activeJobCounts()
+		provActive := b.activeProvisionJobsLocked()
+		if shellActive+provActive >= b.jobLimits.MaxTotal {
+			b.provMu.Unlock()
+			return nil, fmt.Errorf("daemon already has %d active job(s); limit is %d", shellActive+provActive, b.jobLimits.MaxTotal)
+		}
+	}
 	if b.provisionJobs == nil {
 		b.provisionJobs = make(map[string]*provisionJob)
 	}
@@ -190,7 +203,22 @@ func (b *Backend) startProvisionJob(ctx context.Context, spec internal.Workspace
 		b.saveProvisionEntry(job)
 	}()
 
-	return job
+	return job, nil
+}
+
+// activeProvisionJobsLocked counts provision pipelines that have not reached a
+// terminal state. Caller must hold provMu.
+func (b *Backend) activeProvisionJobsLocked() int {
+	n := 0
+	for _, job := range b.provisionJobs {
+		job.mu.Lock()
+		active := !isTerminalProcessStatus(job.status)
+		job.mu.Unlock()
+		if active {
+			n++
+		}
+	}
+	return n
 }
 
 // awaitProvisionJob blocks until a provision job finishes or waitSeconds
@@ -270,12 +298,18 @@ func (b *Backend) provisionJobStatus(job *provisionJob, cursor string) *internal
 }
 
 // effectiveProvisionTimeout combines a per-request timeout with the daemon
-// default, returning the request's value when set, otherwise the daemon's.
+// default, returning the request's value when set, otherwise the daemon's. It
+// also applies --job-max-runtime, which is documented as a daemon-wide cap on
+// any background job (including provisioning pipelines).
 func (b *Backend) effectiveProvisionTimeout(requested int) time.Duration {
+	d := b.provisionTimeout
 	if requested > 0 {
-		return time.Duration(requested) * time.Second
+		d = time.Duration(requested) * time.Second
 	}
-	return b.provisionTimeout
+	if b.jobLimits.MaxRuntime > 0 && (d <= 0 || b.jobLimits.MaxRuntime < d) {
+		d = b.jobLimits.MaxRuntime
+	}
+	return d
 }
 
 // Provision creates a new workspace from the given request.
@@ -306,7 +340,10 @@ func (b *Backend) Provision(ctx context.Context, req internal.ProvisionRequest) 
 		return &internal.ProvisionResult{WorkspaceID: ws.ID, Workspace: ws, Status: internal.ProcessSucceeded}, nil
 	}
 
-	job := b.startProvisionJob(ctx, req.WorkspaceSpec, b.effectiveProvisionTimeout(req.TimeoutSeconds))
+	job, err := b.startProvisionJob(ctx, req.WorkspaceSpec, b.effectiveProvisionTimeout(req.TimeoutSeconds))
+	if err != nil {
+		return nil, err
+	}
 	if req.Async {
 		logger.Info("provision_async", "workspace_id", job.workspaceID, "job_id", job.id)
 		job.mu.Lock()
@@ -337,29 +374,30 @@ func (b *Backend) validateProvision(spec internal.WorkspaceSpec) error {
 		}
 	}
 
-	// A blank repo means there is nothing to clone, so no forge auth is needed.
-	if strings.TrimSpace(spec.RepoURL) == "" {
-		return nil
-	}
-	// Public repositories can be pulled without forge auth; anything else
-	// (including an SSH URL) needs forge authentication to clone.
-	// We should be able to provsion a blank workspace without any forge auth, so only check the repo URL.
-
-	if b.gitPushConfig.AuthMode == "" && spec.RepoURL != "" && !isPublicRepo(spec.RepoURL) {
-		return fmt.Errorf("repository provisioning is unavailable: no forge authentication is configured")
-	}
-	
-
 	// Capacity gate: refuse before cloning or touching any runtime so a
 	// host under pressure does not accumulate more work. This is the single
 	// choke point every provisioner (container, jail, VM, directory) goes
-	// through.
+	// through, so it must run before the blank-repo early return below —
+	// otherwise a blank workspace bypasses every capacity threshold.
 	if b.capacityChecker != nil {
 		if err := b.capacityChecker.Check(); err != nil {
 			logger.Warn("capacity_check_failed", "ref", spec.Ref, "error", err)
 			return err
 		}
 	}
+
+	// A blank repo means there is nothing to clone, so no forge auth is needed.
+	if strings.TrimSpace(spec.RepoURL) == "" {
+		return nil
+	}
+	// Public repositories can be pulled without forge auth; anything else
+	// (including an SSH URL) needs forge authentication to clone.
+	// We should be able to provision a blank workspace without any forge auth,
+	// so only check the repo URL.
+	if b.gitPushConfig.AuthMode == "" && spec.RepoURL != "" && !isPublicRepo(spec.RepoURL) {
+		return fmt.Errorf("repository provisioning is unavailable: no forge authentication is configured")
+	}
+
 	return nil
 }
 
@@ -505,7 +543,17 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	// Copy repo into the runtime
 	emit("repository_copy", "copying repository into %s", handle.WorkDir)
 	if err := handle.Transport.CopyDirIn(ctx, tmpDir, handle.WorkDir); err != nil {
-		b.provisioner.Destroy(ctx, handle)
+		// Rollback is cleanup: it must run even though the request ctx that
+		// caused this failure is often already cancelled. If the destroy
+		// fails, keep the state entry so the container stays discoverable as
+		// a leftover instead of leaking untracked.
+		destroyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 60*time.Second)
+		destroyErr := b.provisioner.Destroy(destroyCtx, handle)
+		cancel()
+		if destroyErr != nil {
+			logger.Warn("provision_rollback_destroy_failed", "workspace_id", wsID, "error", destroyErr)
+			return nil, fmt.Errorf("failed to copy repo: %w (rollback destroy also failed: %v)", err, destroyErr)
+		}
 		if rmErr := b.stateStore.Remove(wsID); rmErr != nil {
 			logger.Warn("state_store_remove_failed", "workspace_id", wsID, "error", rmErr)
 		}

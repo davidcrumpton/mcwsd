@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.366"
+	Version         = "0.4.380"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -413,8 +414,19 @@ func runDaemon(
 
 	authToken := os.Getenv("MCWSD_TOKEN")
 	if authToken == "" {
-		internal.Log.Warn("MCWSD_TOKEN not set, generating random token")
-		authToken = fmt.Sprintf("wsd-%d", time.Now().UnixNano())
+		// A time-based token is predictable and this value used to be a
+		// nanosecond timestamp. Always generate from crypto/rand. Refuse to
+		// generate one at all when the listener is reachable beyond loopback:
+		// a generated token is by definition not a shared secret.
+		if !isLoopbackAddress(bindAddress) {
+			return fmt.Errorf("MCWSD_TOKEN must be set when binding to a non-loopback address (%q)", bindAddress)
+		}
+		token, err := generateAuthToken()
+		if err != nil {
+			return fmt.Errorf("failed to generate auth token: %w", err)
+		}
+		authToken = token
+		internal.Log.Warn("MCWSD_TOKEN not set, generating random token for loopback listener")
 		internal.Log.UnsanitizedInfo("generated_token", "token", authToken)
 	}
 
@@ -1062,6 +1074,30 @@ func generateSessionID() (string, error) {
 		return "", fmt.Errorf("failed to generate session id: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// generateAuthToken returns a cryptographically random bearer token. It must
+// not be derived from time or any other guessable value.
+func generateAuthToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate auth token: %w", err)
+	}
+	return "wsd-" + hex.EncodeToString(b), nil
+}
+
+// isLoopbackAddress reports whether addr binds only to the loopback
+// interface. An empty address binds all interfaces, so it is not loopback.
+func isLoopbackAddress(addr string) bool {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return false
+	}
+	if strings.EqualFold(addr, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(addr, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 // loadProvisioningHints reads the optional provisioning-hints file. A missing

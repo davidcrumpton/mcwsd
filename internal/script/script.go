@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/dop251/goja"
 )
@@ -40,6 +41,11 @@ type Runtime struct {
 	// be pure: no host.* side effects, no per-call state. SetNetwork is NOT
 	// here — it is stateful and uses host.run, so it is a lifecycle function.
 	transport struct {
+		// mu serializes every call into the shared transport VM below. goja
+		// runtimes are not safe for concurrent use, and this VM is shared by
+		// every workspace handle in the process, so the lock must live here
+		// (on the VM owner), not on the per-handle ExecTransport.
+		mu           sync.Mutex
 		vm           *goja.Runtime
 		execArgs     goja.Callable
 		bootstrapCmd goja.Callable

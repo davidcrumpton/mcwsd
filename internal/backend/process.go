@@ -797,6 +797,17 @@ func (b *Backend) execAsJob(ctx context.Context, wsState *workspaceState, ws *in
 		return nil, fmt.Errorf("job %s vanished after launch", info.ID)
 	}
 
+	// Foreground jobs are exempt from the job limits (and may have no
+	// timeout), so an orphan here runs forever. Kill it on any exit path
+	// where the caller's context has gone away — not just the select below —
+	// because a cancelled ctx also makes the probe inside reconcileProcess
+	// fail, which otherwise returned without killing anything.
+	defer func() {
+		if ctx.Err() != nil {
+			b.cancelProcess(wsState, proc, internal.ProcessCancelled)
+		}
+	}()
+
 	start := time.Now()
 	deadline := start.Add(time.Duration(waitSeconds) * time.Second)
 	for {
@@ -835,10 +846,9 @@ func (b *Backend) execAsJob(ctx context.Context, wsState *workspaceState, ws *in
 
 		select {
 		case <-ctx.Done():
-			// The caller went away before the foreground job finished. Kill
-			// it rather than leaving an orphan that is exempt from the job
-			// limits and may run forever.
-			b.cancelProcess(wsState, proc, internal.ProcessCancelled)
+			// The caller went away before the foreground job finished. The
+			// deferred kill above tears it down; foreground jobs are exempt
+			// from the job limits and may run forever if left alone.
 			return nil, ctx.Err()
 		case <-time.After(execPromotePollInterval):
 		}

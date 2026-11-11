@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -474,8 +475,78 @@ func GitAuthArgs(cfg Config, repoURL string) []string {
 	if !ok {
 		return nil
 	}
+	// Scope the credential to the configured forge host. Without this check a
+	// caller could set repo_url to an arbitrary host and the daemon would send
+	// its forge token there (the repo URL is request-controlled). The repo URL
+	// host must match the host implied by the forge's configured API base.
+	allowedHost, ok := cfg.forgeGitHost(forgeType)
+	if !ok {
+		return nil
+	}
+	repoHost, ok := repoURLHost(repoURL)
+	if !ok || !strings.EqualFold(repoHost, allowedHost) {
+		return nil
+	}
+	// Never send a bearer token over cleartext HTTP, even to the right host.
+	if strings.HasPrefix(strings.TrimSpace(repoURL), "http://") {
+		return nil
+	}
 	basicAuth := base64.StdEncoding.EncodeToString([]byte(cfg.gitHTTPUsername(forgeType) + ":" + token))
 	return []string{"-c", "http.extraHeader=Authorization: Basic " + basicAuth}
+}
+
+// forgeGitHost returns the git host implied by the forge's configured API base
+// (e.g. https://gitlab.example.com/api/v4 → gitlab.example.com, and the public
+// GitHub API → github.com). ok is false when no usable API base is configured,
+// in which case callers must not attach a credential.
+func (c Config) forgeGitHost(forgeType string) (string, bool) {
+	var apiBase string
+	switch strings.ToLower(strings.TrimSpace(forgeType)) {
+	case "github":
+		apiBase = c.GitHubAPIBase
+		if strings.TrimSpace(apiBase) == "" {
+			apiBase = "https://api.github.com"
+		}
+	case "gitea":
+		apiBase = c.GiteaAPIBase
+	case "forgejo":
+		apiBase = c.ForgejoAPIBase
+	default: // gitlab
+		apiBase = c.GitLabAPIBase
+	}
+	u, err := url.Parse(strings.TrimSpace(apiBase))
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	// The public GitHub API lives on api.github.com while its git host is
+	// github.com; GitHub Enterprise serves both from the same host.
+	if host == "api.github.com" {
+		return "github.com", true
+	}
+	return host, true
+}
+
+// repoURLHost extracts the host from an http(s) URL or an scp-style git@host
+// address. ok is false for anything ValidateRepoURL would not accept.
+func repoURLHost(raw string) (string, bool) {
+	u := strings.TrimSpace(raw)
+	if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "http://") {
+		parsed, err := url.Parse(u)
+		if err != nil || parsed.Hostname() == "" {
+			return "", false
+		}
+		return strings.ToLower(parsed.Hostname()), true
+	}
+	if strings.HasPrefix(u, "git@") {
+		rest := strings.TrimPrefix(u, "git@")
+		host, _, ok := strings.Cut(rest, ":")
+		if !ok || host == "" {
+			return "", false
+		}
+		return strings.ToLower(host), true
+	}
+	return "", false
 }
 
 func runGit(ctx context.Context, dir string, env []string, args ...string) error {

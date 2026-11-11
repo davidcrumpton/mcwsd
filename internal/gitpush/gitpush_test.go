@@ -197,6 +197,7 @@ func TestGitAuthArgs_TokenMode_ContainsBasicAuth(t *testing.T) {
 		AuthMode:            AuthModeToken,
 		GitLabTokenUsername: "oauth2",
 		GitLabToken:         "mytoken",
+		GitLabAPIBase:       "https://gitlab.example.com/api/v4",
 	}
 	args := GitAuthArgs(cfg, "https://gitlab.example.com/group/repo.git")
 	if len(args) == 0 {
@@ -267,7 +268,7 @@ func TestGitAuthArgs_TokenMode_UsesForgeToken(t *testing.T) {
 			name:     "gitea config selects GiteaToken",
 			forge:    "gitea",
 			repoURL:  "https://gitea.example.com/owner/repo.git",
-			cfg:      Config{AuthMode: AuthModeToken, GiteaToken: "gitea-token", GitLabToken: "glpat-wrong"},
+			cfg:      Config{AuthMode: AuthModeToken, GiteaToken: "gitea-token", GitLabToken: "glpat-wrong", GiteaAPIBase: "https://gitea.example.com/api/v1"},
 			wantUser: "oauth2",
 			wantTok:  "gitea-token",
 		},
@@ -275,7 +276,7 @@ func TestGitAuthArgs_TokenMode_UsesForgeToken(t *testing.T) {
 			name:     "forgejo config selects ForgeJOToken",
 			forge:    "forgejo",
 			repoURL:  "https://forgejo.example.com/owner/repo.git",
-			cfg:      Config{AuthMode: AuthModeToken, ForgeJOToken: "forgejo-token", GitLabToken: "glpat-wrong"},
+			cfg:      Config{AuthMode: AuthModeToken, ForgeJOToken: "forgejo-token", GitLabToken: "glpat-wrong", ForgejoAPIBase: "https://forgejo.example.com/api/v1"},
 			wantUser: "oauth2",
 			wantTok:  "forgejo-token",
 		},
@@ -283,7 +284,7 @@ func TestGitAuthArgs_TokenMode_UsesForgeToken(t *testing.T) {
 			name:     "gitlab config still selects GitLabToken",
 			forge:    "gitlab",
 			repoURL:  "https://gitlab.example.com/group/repo.git",
-			cfg:      Config{AuthMode: AuthModeToken, GitLabTokenUsername: "oauth2", GitLabToken: "glpat-token"},
+			cfg:      Config{AuthMode: AuthModeToken, GitLabTokenUsername: "oauth2", GitLabToken: "glpat-token", GitLabAPIBase: "https://gitlab.example.com/api/v4"},
 			wantUser: "oauth2",
 			wantTok:  "glpat-token",
 		},
@@ -308,6 +309,31 @@ func TestGitAuthArgs_TokenMode_NoForgeToken_Nil(t *testing.T) {
 	cfg := Config{AuthMode: AuthModeToken, ForgeType: "github"}
 	if args := GitAuthArgs(cfg, "https://github.com/owner/repo.git"); args != nil {
 		t.Errorf("GitAuthArgs with no token: expected nil, got %v", args)
+	}
+}
+
+// TestGitAuthArgs_TokenMode_RejectsCrossHostRepoURL is the regression test for
+// credential exfiltration: a request-controlled repo_url on a host other than
+// the configured forge must never receive the daemon's token.
+func TestGitAuthArgs_TokenMode_RejectsCrossHostRepoURL(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeToken,
+		ForgeType:     "gitlab",
+		GitLabToken:   "glpat-secret",
+		GitLabAPIBase: "https://gitlab.example.com/api/v4",
+	}
+	cases := []string{
+		"https://evil.example.com/group/repo.git",
+		"https://gitlab.example.com.evil.example/group/repo.git",
+		"https://api.github.com/group/repo.git",
+		"git@evil.example.com:group/repo.git",
+		// Cleartext HTTP to the right host must not carry the token either.
+		"http://gitlab.example.com/group/repo.git",
+	}
+	for _, repoURL := range cases {
+		if args := GitAuthArgs(cfg, repoURL); args != nil {
+			t.Errorf("GitAuthArgs(%q) = %v, want nil (token must not leave the configured host)", repoURL, args)
+		}
 	}
 }
 
