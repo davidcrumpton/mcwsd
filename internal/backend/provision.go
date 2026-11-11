@@ -13,6 +13,7 @@ import (
 
 	"github.com/davidcrumpton/mcwsd/internal"
 	"github.com/davidcrumpton/mcwsd/internal/detect"
+	"github.com/davidcrumpton/mcwsd/internal/gitpush"
 	"github.com/davidcrumpton/mcwsd/internal/jobs"
 	"github.com/davidcrumpton/mcwsd/internal/runtime"
 	"github.com/davidcrumpton/mcwsd/internal/state"
@@ -47,7 +48,7 @@ func (j *provisionJob) command() string {
 	if strings.TrimSpace(j.repoURL) == "" {
 		return "provision (blank workspace)"
 	}
-	return "provision " + j.repoURL
+	return "provision " + gitpush.RedactRepoURL(j.repoURL)
 }
 
 // appendLog adds one progress line to the job's combined log.
@@ -390,6 +391,12 @@ func (b *Backend) validateProvision(spec internal.WorkspaceSpec) error {
 	if strings.TrimSpace(spec.RepoURL) == "" {
 		return nil
 	}
+	// Validate the URL before starting a provision job, so an unsafe or
+	// credential-bearing URL is rejected before it can be written into the
+	// jobs store or any log.
+	if err := gitpush.ValidateRepoURL(spec.RepoURL); err != nil {
+		return err
+	}
 	// Public repositories can be pulled without forge auth; anything else
 	// (including an SSH URL) needs forge authentication to clone.
 	// We should be able to provision a blank workspace without any forge auth,
@@ -427,7 +434,7 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	// Clone only when a repository was requested. An empty directory is a
 	// supported blank workspace and is detected as such below.
 	if strings.TrimSpace(spec.RepoURL) != "" {
-		emit("clone", "cloning %s (ref %q)", spec.RepoURL, spec.Ref)
+		emit("clone", "cloning %s (ref %q)", gitpush.RedactRepoURL(spec.RepoURL), spec.Ref)
 		if err := cloneRepo(ctx, tmpDir, spec.RepoURL, spec.Ref, b.gitPushConfig); err != nil {
 			return nil, fmt.Errorf("failed to clone repo: %w", err)
 		}
@@ -462,24 +469,13 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 		logger.Info("provisioning_hints_applied", "workspace_id", wsID)
 	}
 
-	// Compute cache key from manifests
-	cacheKey, err := computeCacheKey(tmpDir, profile)
-	if err != nil {
-		logger.Warn("cache_key_computation_failed", "workspace_id", wsID, "error", err)
-		cacheKey = ""
-	}
-
-	var cacheHit bool
+	// Dependency caching is intentionally not used here: the cache manager
+	// operates on host paths, while install commands run inside the runtime,
+	// so there is no safe way to copy the installed artifacts into it with the
+	// current transport. Reporting a cache hit here would skip installs
+	// against an empty directory and leave workspaces missing dependencies.
+	const cacheHit = false
 	var cacheMount string
-
-	if cacheKey != "" {
-		cachePath, hit := b.cacheManager.Get(cacheKey)
-		if hit {
-			cacheHit = true
-			cacheMount = cachePath
-			logger.Info("cache_hit", "workspace_id", wsID, "cache_key", cacheKey)
-		}
-	}
 
 	logger.Info("pulling_base_image", "image", profile.BaseImage)
 	emit("provisioner_start", "detected environment %q; provisioning %s runtime", profile.Language, b.provisioner.Name())
@@ -532,6 +528,10 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 		ContainerName:  containerName,
 		SessionID:      b.sessionID,
 		RepoURL:        spec.RepoURL,
+		Ref:            spec.Ref,
+		EnvOverrides:   spec.EnvOverrides,
+		Interface:      spec.Interface,
+		IP4Address:     spec.IP4Address,
 		CreatedAt:      time.Now(),
 		LastAccessedAt: time.Now(),
 		WorkDir:        handle.WorkDir,
@@ -580,12 +580,6 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 			logger.Warn("install_failed", "workspace_id", wsID, "error", err)
 			// Continue anyway - agent can handle install failures
 		} else {
-			// Save to cache
-			if cacheKey != "" {
-				if err := b.saveCache(cacheKey, profile); err != nil {
-					logger.Warn("cache_save_failed", "workspace_id", wsID, "error", err)
-				}
-			}
 			logger.Info("install_complete", "workspace_id", wsID)
 		}
 	}

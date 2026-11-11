@@ -152,7 +152,7 @@ func sanitizeLogValue(key interface{}, value interface{}) interface{} {
 		return value
 	}
 	keyStr := strings.ToLower(fmt.Sprint(key))
-	if strings.Contains(keyStr, "token") || strings.Contains(keyStr, "secret") || strings.Contains(keyStr, "password") || strings.Contains(keyStr, "authorization") || strings.Contains(keyStr, "cookie") || strings.Contains(keyStr, "header") || strings.Contains(keyStr, "key") {
+	if strings.Contains(keyStr, "token") || strings.Contains(keyStr, "secret") || strings.Contains(keyStr, "password") || strings.Contains(keyStr, "authorization") || strings.Contains(keyStr, "cookie") || strings.Contains(keyStr, "header") || strings.Contains(keyStr, "key") || strings.Contains(keyStr, "repo_url") || strings.Contains(keyStr, "repo-url") {
 		return "[REDACTED]"
 	}
 	if s, ok := value.(string); ok && (strings.Contains(s, "Bearer ") || strings.Contains(s, "token=")) {
@@ -163,7 +163,7 @@ func sanitizeLogValue(key interface{}, value interface{}) interface{} {
 
 func sanitizeAuditValue(key string, value interface{}) interface{} {
 	keyLower := strings.ToLower(key)
-	if strings.Contains(keyLower, "token") || strings.Contains(keyLower, "secret") || strings.Contains(keyLower, "password") || strings.Contains(keyLower, "authorization") || strings.Contains(keyLower, "cookie") || strings.Contains(keyLower, "header") || strings.Contains(keyLower, "key") {
+	if strings.Contains(keyLower, "token") || strings.Contains(keyLower, "secret") || strings.Contains(keyLower, "password") || strings.Contains(keyLower, "authorization") || strings.Contains(keyLower, "cookie") || strings.Contains(keyLower, "header") || strings.Contains(keyLower, "key") || strings.Contains(keyLower, "repo_url") || strings.Contains(keyLower, "repo-url") {
 		return "[REDACTED]"
 	}
 	if s, ok := value.(string); ok && (strings.Contains(s, "Bearer ") || strings.Contains(s, "token=")) {

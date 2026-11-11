@@ -33,24 +33,25 @@ type Provisioner struct {
 	ipam    *ipam.IPAM
 }
 
-func newProvisioner(r *Runtime, options *OptionValues) *Provisioner {
+func newProvisioner(r *Runtime, options *OptionValues) (*Provisioner, error) {
 	obj := options.Object()
 	p := &Provisioner{
 		runtime: r,
 		options: obj,
 	}
 	if base, ok := obj[optionIPBaseNetwork].(string); ok && base != "" {
-		if size, ok := obj[optionIPPoolSize].(int64); ok && size > 0 {
-			if alloc, err := ipam.New(base, int(size)); err == nil {
-				p.ipam = alloc
-			}
+		size, _ := obj[optionIPPoolSize].(int64)
+		alloc, err := ipam.New(base, int(size))
+		if err != nil {
+			return nil, fmt.Errorf("invalid IPAM configuration (%s=%q, %s=%d): %w", optionIPBaseNetwork, base, optionIPPoolSize, size, err)
 		}
+		p.ipam = alloc
 	}
 	// The transport functions read the resolved options via host.options.
 	if err := r.bindTransportOptions(obj); err != nil {
 		internal.Log.Warn("bind_transport_options_failed", "error", err)
 	}
-	return p
+	return p, nil
 }
 
 var (

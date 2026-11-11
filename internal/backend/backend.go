@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -159,6 +157,17 @@ func (s *workspaceState) acquireNetwork(ctx context.Context, transport runtime.E
 	}
 	s.netRefs++
 	return nil
+}
+
+// adoptNetworkReference records that a recovered job already holds a network
+// reference from the previous daemon process. The network is left attached
+// across the restart, so we must account for it without calling SetNetwork
+// (which could fail with "endpoint already exists"); releaseNetwork will
+// detach it when the recovered job finishes.
+func (s *workspaceState) adoptNetworkReference() {
+	s.netMu.Lock()
+	s.netRefs++
+	s.netMu.Unlock()
 }
 
 // releaseNetwork drops one reference and detaches the network when the last
@@ -357,7 +366,11 @@ func (b *Backend) CleanupOrphanResources(ctx context.Context) (int, error) {
 // any new workspaces are provisioned, to report or clean up what an
 // aborted previous run left behind.
 func (b *Backend) Leftovers() []state.Entry {
-	return b.stateStore.Orphans(b.sessionID)
+	entries := b.stateStore.Orphans(b.sessionID)
+	for i := range entries {
+		entries[i].RepoURL = gitpush.RedactRepoURL(entries[i].RepoURL)
+	}
+	return entries
 }
 
 // DestroyLeftover force-removes a container tracked in the state file by
@@ -401,31 +414,44 @@ func (b *Backend) touch(workspaceID string) {
 func (b *Backend) Prune(ctx context.Context, ttl time.Duration) (removed, failed int) {
 	cutoff := time.Now().Add(-ttl)
 	entries := b.stateStore.Stale(cutoff)
-	for _, e := range entries {
-		// Drop any in-memory state first so a pruned workspace no longer
-		// appears live even if container removal below hits a hiccup. Any
-		// leftover state-file entry that survives a failed removal is still
-		// tracked and will be retried on the next prune pass. Job results are
-		// captured before the container goes away.
-		b.mu.Lock()
+	for _, snapshot := range entries {
+		// The staleness snapshot can be arbitrarily old by the time we get
+		// here. Re-read the entry and re-check immediately before destroying;
+		// an agent that touched the workspace in between must win.
+		e, ok := b.stateStore.Get(snapshot.WorkspaceID)
+		if !ok {
+			continue
+		}
+		lastUsed := e.LastAccessedAt
+		if lastUsed.IsZero() {
+			lastUsed = e.CreatedAt
+		}
+		if !lastUsed.Before(cutoff) {
+			continue
+		}
+
+		// Capture job results while the runtime still exists. Do not drop the
+		// in-memory workspace until the container has actually been removed:
+		// if removal fails, the workspace must remain usable/tracked rather
+		// than vanishing from memory while the container still runs.
+		b.mu.RLock()
 		wsState, hadWs := b.workspaces[e.WorkspaceID]
-		delete(b.workspaces, e.WorkspaceID)
-		b.mu.Unlock()
+		b.mu.RUnlock()
 		if hadWs {
 			b.finalizeJobsForWorkspace(ctx, wsState)
 		}
-		b.removeProcessesForWorkspace(e.WorkspaceID)
 
 		if err := b.DestroyLeftover(ctx, e.WorkspaceID); err != nil {
 			logger.Warn("prune_failed", "workspace_id", e.WorkspaceID, "container_name", e.ContainerName, "error", err)
 			failed++
 			continue
 		}
+
+		b.mu.Lock()
+		delete(b.workspaces, e.WorkspaceID)
+		b.mu.Unlock()
+		b.removeProcessesForWorkspace(e.WorkspaceID)
 		removed++
-		lastUsed := e.LastAccessedAt
-		if lastUsed.IsZero() {
-			lastUsed = e.CreatedAt
-		}
 		logger.Info("pruned_workspace", "workspace_id", e.WorkspaceID, "container_name", e.ContainerName,
 			"created_at", e.CreatedAt.Format(time.RFC3339), "last_accessed_at", lastUsed.Format(time.RFC3339))
 	}
@@ -462,8 +488,14 @@ func (b *Backend) RecoverWorkspaces(ctx context.Context) {
 
 		// Create a minimal Workspace object from the state entry
 		ws := &internal.Workspace{
-			ID:        e.WorkspaceID,
-			Spec:      internal.WorkspaceSpec{RepoURL: e.RepoURL},
+			ID: e.WorkspaceID,
+			Spec: internal.WorkspaceSpec{
+				RepoURL:      e.RepoURL,
+				Ref:          e.Ref,
+				EnvOverrides: e.EnvOverrides,
+				Interface:    e.Interface,
+				IP4Address:   e.IP4Address,
+			},
 			OS:        e.OS,
 			WorkDir:   e.WorkDir,
 			CreatedAt: e.CreatedAt,
@@ -570,12 +602,21 @@ func (b *Backend) Exec(ctx context.Context, ws *internal.Workspace, req internal
 			wsState.forgetSecret(secretRef)
 		}
 	}()
+	// A non-positive timeout means the secret lives for the duration of this
+	// call and is revoked by the defer above; pass the TTL through unchanged
+	// so the broker does not auto-revoke it immediately.
+	var secretEnv []string
 	for _, secretRef := range req.Secrets {
 		if err := b.secretBroker.Grant(ctx, ws.ID, secretRef, time.Duration(req.TimeoutSeconds)*time.Second); err != nil {
 			return nil, fmt.Errorf("failed to grant secret %s: %w", secretRef, err)
 		}
 		granted = append(granted, secretRef)
 		wsState.recordSecret(secretRef)
+		// Inject the granted value as an environment variable for exactly this
+		// command. The value is never written to disk.
+		if value, ok := b.secretBroker.GetValue(ws.ID, secretRef); ok {
+			secretEnv = append(secretEnv, secretRef+"="+value)
+		}
 	}
 
 	// Network is off by default (disconnected at the end of Provision).
@@ -602,7 +643,7 @@ func (b *Backend) Exec(ctx context.Context, ws *internal.Workspace, req internal
 	}
 
 	startTime := time.Now()
-	result, err := wsState.handle.Transport.Exec(execCtx, []string{"sh", "-c", req.Command}, wsState.handle.WorkDir, nil)
+	result, err := wsState.handle.Transport.Exec(execCtx, []string{"sh", "-c", req.Command}, wsState.handle.WorkDir, secretEnv)
 	durationMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
@@ -610,9 +651,9 @@ func (b *Backend) Exec(ctx context.Context, ws *internal.Workspace, req internal
 		return nil, err
 	}
 
-	// Scrub secrets from output
-	result.Stdout = b.scrubSecrets(result.Stdout, req.Secrets)
-	result.Stderr = b.scrubSecrets(result.Stderr, req.Secrets)
+	// Scrub any granted secret value that the command echoed back.
+	result.Stdout = b.scrubSecrets(ws.ID, result.Stdout, req.Secrets)
+	result.Stderr = b.scrubSecrets(ws.ID, result.Stderr, req.Secrets)
 
 	result.DurationMs = durationMs
 	logger.Info("exec_complete", "workspace_id", ws.ID, "exit_code", result.ExitCode, "duration_ms", durationMs)
@@ -867,20 +908,17 @@ func (b *Backend) gitStatusDetail(ctx context.Context, wsState *workspaceState) 
 func (b *Backend) Destroy(ctx context.Context, ws *internal.Workspace) error {
 	logger.Info("destroy", "workspace_id", ws.ID)
 
-	b.mu.Lock()
+	b.mu.RLock()
 	wsState, ok := b.workspaces[ws.ID]
-	if ok {
-		delete(b.workspaces, ws.ID)
-	}
-	b.mu.Unlock()
+	b.mu.RUnlock()
 
 	// Capture job results and mark still-active jobs interrupted before the
-	// container is torn down, then drop them from memory. Persisted records
-	// are retained for the configured retention window.
+	// container is torn down. The workspace stays in memory until removal
+	// succeeds: if it fails, the container is still running and must remain
+	// addressable rather than disappearing from the in-memory map.
 	if ok {
 		b.finalizeJobsForWorkspace(ctx, wsState)
 	}
-	b.removeProcessesForWorkspace(ws.ID)
 
 	if !ok {
 		// Not in this process's memory. Either it was already destroyed,
@@ -901,9 +939,11 @@ func (b *Backend) Destroy(ctx context.Context, ws *internal.Workspace) error {
 
 	// Revoke all secrets. Take a snapshot under the workspace's secret lock
 	// because a concurrent Exec may still be granting or revoking.
-	for _, secretRef := range wsState.secretRefs() {
-		if err := b.secretBroker.Revoke(ctx, ws.ID, secretRef); err != nil {
-			logger.Warn("secret_revoke_failed", "workspace_id", ws.ID, "secret", secretRef, "error", err)
+	if b.secretBroker != nil {
+		for _, secretRef := range wsState.secretRefs() {
+			if err := b.secretBroker.Revoke(ctx, ws.ID, secretRef); err != nil {
+				logger.Warn("secret_revoke_failed", "workspace_id", ws.ID, "secret", secretRef, "error", err)
+			}
 		}
 	}
 
@@ -913,8 +953,20 @@ func (b *Backend) Destroy(ctx context.Context, ws *internal.Workspace) error {
 	if err := b.provisioner.Destroy(ctx, wsState.handle); err != nil {
 		return fmt.Errorf("failed to remove container: %w", err)
 	}
+
+	// Removal succeeded: now drop the in-memory workspace and its processes.
+	b.mu.Lock()
+	delete(b.workspaces, ws.ID)
+	b.mu.Unlock()
+	b.removeProcessesForWorkspace(ws.ID)
+
 	if err := b.stateStore.Remove(ws.ID); err != nil {
 		logger.Warn("state_store_remove_failed", "workspace_id", ws.ID, "error", err)
+	}
+	// Drop any remaining per-workspace secret entries (and their timers) so
+	// the broker does not retain them after the workspace is gone.
+	if b.secretBroker != nil {
+		b.secretBroker.RevokeAll(ws.ID)
 	}
 
 	logger.Info("destroy_complete", "workspace_id", ws.ID)
@@ -1078,63 +1130,15 @@ func systemPackageCommands(os runtime.OS, baseImage string) (manager, install st
 	}
 }
 
-func computeCacheKey(repoPath string, profile *internal.EnvironmentProfile) (string, error) {
-	var files []string
-
-	switch profile.Language {
-	case "go":
-		files = []string{"go.mod", "go.sum"}
-	case "rust":
-		files = []string{"Cargo.toml", "Cargo.lock", "rust-toolchain.toml"}
-	case "python":
-		if profile.PackageManager == "poetry" {
-			files = []string{"pyproject.toml", "poetry.lock"}
-		} else {
-			files = []string{"requirements.txt"}
-		}
-	case "node":
-		files = []string{"package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json"}
-	default:
-		return "", fmt.Errorf("unknown language for caching: %s", profile.Language)
-	}
-
-	h := sha256.New()
-	for _, f := range files {
-		path := filepath.Join(repoPath, f)
-		data, err := os.ReadFile(path)
-		if err == nil {
-			h.Write(data)
+// scrubSecrets replaces any granted secret value that appears in command
+// output with a redaction marker. Values are read from the broker while the
+// call's grants are still live (the caller revokes them on return).
+func (b *Backend) scrubSecrets(workspaceID, output string, secretRefs []string) string {
+	for _, secretRef := range secretRefs {
+		if value, ok := b.secretBroker.GetValue(workspaceID, secretRef); ok && value != "" {
+			output = strings.ReplaceAll(output, value, "[REDACTED]")
 		}
 	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-func (b *Backend) saveCache(cacheKey string, profile *internal.EnvironmentProfile) error {
-	// Determine what to cache based on language
-	var cachePaths []string
-	switch profile.Language {
-	case "go":
-		cachePaths = []string{"/go/pkg/mod"}
-	case "rust":
-		cachePaths = []string{"/root/.cargo/registry", "/root/.cargo/git"}
-	case "python":
-		cachePaths = []string{"/root/.cache/pip"}
-	case "node":
-		cachePaths = []string{"/root/.npm"}
-	}
-
-	for _, cp := range cachePaths {
-		// Extract and save to cache manager
-		// Simplified: just mark as cached for now
-		b.cacheManager.Save(cacheKey, cp)
-	}
-	return nil
-}
-
-func (b *Backend) scrubSecrets(output string, secretRefs []string) string {
-	// In a real implementation, this would look up actual secret values
-	// and redact them. For now, return as-is since broker handles injection.
 	return output
 }
 

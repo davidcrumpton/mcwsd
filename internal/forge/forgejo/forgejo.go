@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -71,18 +70,20 @@ func (f *Forge) OpenMergeRequest(ctx context.Context, req forge.OpenMRRequest) (
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "token "+f.Token)
-		resp, err = http.DefaultClient.Do(httpReq)
+		resp, err = forge.HTTPClient.Do(httpReq)
 		if err != nil {
 			return nil, err
 		}
-		bodyBytes, _ = io.ReadAll(resp.Body)
+		bodyBytes, _ = forge.ReadResponseBody(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			break
 		}
 		if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(string(bodyBytes), "head ref") {
 			internal.Log.Debug("DEBUG_forgejo_pr_retry", "attempt", i+1, "status", resp.StatusCode)
-			time.Sleep(2 * time.Second)
+			if err := forge.SleepContext(ctx, 2*time.Second); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		break

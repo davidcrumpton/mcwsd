@@ -5,7 +5,40 @@
 // is identical regardless of which forge is in play.
 package forge
 
-import "context"
+import (
+	"context"
+	"io"
+	"net/http"
+	"time"
+)
+
+// HTTPClient is the shared client for forge REST calls. A bounded timeout
+// keeps a hung forge from pinning a daemon goroutine (and the HTTP handler
+// that triggered it) forever.
+var HTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+// MaxResponseBytes caps how much of a forge API response is read into memory.
+const MaxResponseBytes = 4 << 20
+
+// ReadResponseBody reads at most MaxResponseBytes from r.
+func ReadResponseBody(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, MaxResponseBytes))
+}
+
+// SleepContext waits for d or until ctx is cancelled, whichever comes first.
+func SleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // OpenMRRequest describes a merge/pull request to open after a branch has
 // already been pushed to the remote.

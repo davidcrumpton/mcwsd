@@ -41,6 +41,20 @@ type Entry struct {
 	// OS is the operating system of the provisioned runtime (e.g. "linux",
 	// "freebsd", "openbsd"). Stored so workspaces can be recovered after a daemon restart.
 	OS string `json:"os,omitempty"`
+	// Ref is the git ref the workspace was cloned from. Persisted so a
+	// recovered workspace still targets the right branch when opening a PR.
+	Ref string `json:"ref,omitempty"`
+	// EnvOverrides, Interface and IP4Address are the remainder of the
+	// request-time workspace spec that must survive a restart for a recovered
+	// workspace to behave exactly like the original.
+	EnvOverrides map[string]string `json:"env_overrides,omitempty"`
+	Interface    string            `json:"interface,omitempty"`
+	IP4Address   string            `json:"ip4_address,omitempty"`
+
+	// lastPersisted is when LastAccessedAt was last written to disk. It is
+	// unexported so it is never serialized; it exists only to debounce
+	// Touch's full-file rewrite on the hot polling path.
+	lastPersisted time.Time
 }
 
 // Store is a JSON-file-backed, mutex-guarded map of workspace ID -> Entry.
@@ -124,6 +138,12 @@ func (s *Store) Get(workspaceID string) (Entry, bool) {
 	return e, ok
 }
 
+// touchPersistInterval bounds how often Touch rewrites the whole state file.
+// Clients poll job status frequently, and serializing the entire map on every
+// poll is significant I/O and lock contention. The in-memory LastAccessedAt is
+// always updated so pruning is accurate; only the durable copy is debounced.
+const touchPersistInterval = 30 * time.Second
+
 // Touch updates LastAccessedAt for workspaceID to now. Call this on every
 // use of a workspace so the pruner can tell "actively in use" from
 // "abandoned". Missing entries are a no-op (a leftover being cleaned up
@@ -135,8 +155,16 @@ func (s *Store) Touch(workspaceID string) error {
 	if !ok {
 		return nil
 	}
-	e.LastAccessedAt = time.Now()
+	now := time.Now()
+	e.LastAccessedAt = now
+	persist := e.lastPersisted.IsZero() || now.Sub(e.lastPersisted) >= touchPersistInterval
+	if persist {
+		e.lastPersisted = now
+	}
 	s.entries[workspaceID] = e
+	if !persist {
+		return nil
+	}
 	return s.saveLocked()
 }
 
@@ -196,8 +224,13 @@ func (s *Store) saveLocked() error {
 	}
 
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp state file: %w", err)
+	}
+	// WriteFile keeps the mode of a pre-existing file, so force the
+	// restrictive mode in case a stale temp file was left behind.
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return fmt.Errorf("failed to secure temp state file: %w", err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("failed to rename temp state file: %w", err)

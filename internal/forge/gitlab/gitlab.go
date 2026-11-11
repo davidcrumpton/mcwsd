@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -88,12 +87,12 @@ func (f *Forge) OpenMergeRequest(ctx context.Context, req forge.OpenMRRequest) (
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("PRIVATE-TOKEN", f.Token)
 
-		resp, doErr = http.DefaultClient.Do(httpReq)
+		resp, doErr = forge.HTTPClient.Do(httpReq)
 		if doErr != nil {
 			return nil, doErr
 		}
 
-		bodyBytes, _ = io.ReadAll(resp.Body)
+		bodyBytes, _ = forge.ReadResponseBody(resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusCreated {
@@ -104,7 +103,9 @@ func (f *Forge) OpenMergeRequest(ctx context.Context, req forge.OpenMRRequest) (
 		// the MR API might briefly return 400 with "source_branch does not exist".
 		if resp.StatusCode == http.StatusBadRequest && strings.Contains(string(bodyBytes), "source_branch") && strings.Contains(string(bodyBytes), "does not exist") {
 			internal.Log.Debug("DEBUG_gitlab_mr_retry", "attempt", i+1, "status", resp.StatusCode)
-			time.Sleep(3 * time.Second)
+			if err := forge.SleepContext(ctx, 3*time.Second); err != nil {
+				return nil, err
+			}
 			continue
 		}
 

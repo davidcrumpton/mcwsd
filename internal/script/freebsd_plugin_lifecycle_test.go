@@ -35,7 +35,10 @@ func TestFreeBSDJailPluginLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := p.Provision(context.Background(), runtime.ProvisionSpec{
 		WorkspaceID: "ws-1", WorkDir: "/workspace/repo",
@@ -82,7 +85,10 @@ func TestFreeBSDJailPluginRecoverReadsConfig(t *testing.T) {
 	if err := fs.Parse([]string{"--ip-base-network", "192.168.1.200/24", "--ip-pool-size", "8"}); err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := p.RecoverHandle(context.Background(), "wsd-ws-abc", "/workspace/repo")
 	if err != nil {

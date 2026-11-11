@@ -38,7 +38,10 @@ func TestOpenBSDVMDPluginLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := p.Provision(context.Background(), runtime.ProvisionSpec{
 		WorkspaceID: "ws-1", WorkDir: "/workspace/repo",
@@ -77,7 +80,10 @@ func TestOpenBSDVMDPluginRecoverUsesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := p.RecoverHandle(context.Background(), "wsd-ws-abc", "/workspace/repo")
 	if err != nil {

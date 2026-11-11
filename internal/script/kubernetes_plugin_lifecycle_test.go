@@ -38,7 +38,10 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h, err := p.Provision(context.Background(), runtime.ProvisionSpec{
 		WorkspaceID: "ws-1", Image: "alpine", WorkDir: "/w",
 	})

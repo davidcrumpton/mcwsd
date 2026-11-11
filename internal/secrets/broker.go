@@ -42,15 +42,16 @@ func (b *Broker) Grant(ctx context.Context, workspaceID string, secretRef string
 	// with GPG/YubiKey-backed tooling or similar
 	value := "SECRET_" + secretRef
 
-	entry := &secretEntry{
-		value:     value,
-		expiresAt: time.Now().Add(ttl),
+	entry := &secretEntry{value: value}
+	// A non-positive TTL means "for the duration of the call": the caller
+	// revokes it when the exec finishes. Scheduling a timer for 0 (or a
+	// negative duration) would revoke the secret before it could be used.
+	if ttl > 0 {
+		entry.expiresAt = time.Now().Add(ttl)
+		entry.timer = time.AfterFunc(ttl, func() {
+			b.Revoke(context.Background(), workspaceID, secretRef)
+		})
 	}
-
-	// Auto-revoke after TTL
-	entry.timer = time.AfterFunc(ttl, func() {
-		b.Revoke(context.Background(), workspaceID, secretRef)
-	})
 
 	b.secrets[workspaceID][secretRef] = entry
 	internal.Log.Debug("secret_granted", "workspace_id", workspaceID, "secret_ref", secretRef, "ttl", ttl)
@@ -82,10 +83,30 @@ func (b *Broker) GetValue(workspaceID, secretRef string) (string, bool) {
 
 	if ws, ok := b.secrets[workspaceID]; ok {
 		if entry, ok := ws[secretRef]; ok {
-			if time.Now().Before(entry.expiresAt) {
+			// A zero expiresAt means the secret is valid until explicitly
+			// revoked (the duration-of-call case).
+			if entry.expiresAt.IsZero() || time.Now().Before(entry.expiresAt) {
 				return entry.value, true
 			}
 		}
 	}
 	return "", false
+}
+
+// RevokeAll removes every secret granted to a workspace and stops their
+// timers. Called when the workspace is destroyed so the broker does not retain
+// per-workspace entries forever.
+func (b *Broker) RevokeAll(workspaceID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ws, ok := b.secrets[workspaceID]
+	if !ok {
+		return
+	}
+	for _, entry := range ws {
+		if entry.timer != nil {
+			entry.timer.Stop()
+		}
+	}
+	delete(b.secrets, workspaceID)
 }

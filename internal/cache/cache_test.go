@@ -62,8 +62,12 @@ func TestSave_ThenGet_Hit(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "module"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	const key = "go-mod-abc123"
-	if err := m.Save(key, "/some/container/path"); err != nil {
+	if err := m.Save(key, src); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -84,8 +88,12 @@ func TestSave_CreatesCacheSubDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "cargo"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	const key = "rust-cargo-xyz"
-	if err := m.Save(key, "/container/path"); err != nil {
+	if err := m.Save(key, src); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -103,8 +111,12 @@ func TestGet_UpdatesLastAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "npm"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	const key = "node-npm-abc"
-	if err := m.Save(key, "/path"); err != nil {
+	if err := m.Save(key, src); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,11 +145,19 @@ func TestSave_Idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	srcA := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcA, "a"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srcB := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcB, "b"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	const key = "idempotent-key"
-	if err := m.Save(key, "/a"); err != nil {
+	if err := m.Save(key, srcA); err != nil {
 		t.Fatalf("first Save: %v", err)
 	}
-	if err := m.Save(key, "/b"); err != nil {
+	if err := m.Save(key, srcB); err != nil {
 		t.Fatalf("second Save: %v", err)
 	}
 
@@ -152,8 +172,16 @@ func TestEvict_UnderLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = m.Save("k1", "/p1")
-	_ = m.Save("k2", "/p2")
+	src1 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src1, "f"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src2, "f"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = m.Save("k1", src1)
+	_ = m.Save("k2", src2)
 
 	// evict should not remove anything when under the limit.
 	m.evict()

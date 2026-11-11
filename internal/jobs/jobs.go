@@ -205,8 +205,13 @@ func (s *Store) saveLocked() error {
 		return fmt.Errorf("failed to marshal jobs: %w", err)
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write temp jobs file: %w", err)
+	}
+	// WriteFile keeps the mode of a pre-existing file, so force the
+	// restrictive mode in case a stale temp file was left behind.
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return fmt.Errorf("failed to secure temp jobs file: %w", err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		return fmt.Errorf("failed to rename temp jobs file: %w", err)

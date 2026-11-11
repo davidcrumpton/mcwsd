@@ -114,7 +114,7 @@ func Load(path string) (*Runtime, error) {
 
 // NewProvisioner returns a Provisioner bound to this plugin with the given
 // parsed option values.
-func (r *Runtime) NewProvisioner(options *OptionValues) *Provisioner {
+func (r *Runtime) NewProvisioner(options *OptionValues) (*Provisioner, error) {
 	return newProvisioner(r, options)
 }
 

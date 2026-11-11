@@ -202,6 +202,17 @@ func (w *statusRecorder) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
+// maxRequestBodyBytes caps every JSON request body. It is large enough for a
+// source file written via PUT /workspaces/{id}/file but small enough that a
+// client cannot exhaust daemon memory by streaming an unbounded body.
+const maxRequestBodyBytes = 10 << 20
+
+// decodeJSONBody decodes exactly one JSON value from a size-limited body.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	return json.NewDecoder(r.Body).Decode(dst)
+}
+
 // PrepareRequest is the body for POST /workspaces.
 type PrepareRequest struct {
 	RepoURL      string            `json:"repo_url"`
@@ -237,7 +248,7 @@ type PrepareResponse struct {
 
 func (s *Server) handlePrepare(w http.ResponseWriter, r *http.Request) {
 	var req PrepareRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -316,7 +327,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req ExecRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -404,7 +415,7 @@ func (s *Server) handleSafeEdit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req SafeEditRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -457,7 +468,7 @@ func (s *Server) handleCommitAndPR(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req CommitAndPRRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -624,7 +635,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req WriteFileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -666,7 +677,7 @@ func (s *Server) handleStartProcess(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	var req StartProcessRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(w, r, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}

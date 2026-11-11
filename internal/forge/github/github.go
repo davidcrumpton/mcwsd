@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -94,11 +93,11 @@ func (f *Forge) OpenMergeRequest(ctx context.Context, req forge.OpenMRRequest) (
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+f.Token)
 
-		resp, err = http.DefaultClient.Do(httpReq)
+		resp, err = forge.HTTPClient.Do(httpReq)
 		if err != nil {
 			return nil, err
 		}
-		bodyBytes, _ = io.ReadAll(resp.Body)
+		bodyBytes, _ = forge.ReadResponseBody(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
 			break
@@ -110,7 +109,9 @@ func (f *Forge) OpenMergeRequest(ctx context.Context, req forge.OpenMRRequest) (
 		if resp.StatusCode == http.StatusUnprocessableEntity && isRetryablePRCreateError(bodyBytes) {
 			internal.Log.Info("github_pr_create_retry", "attempt", i+1, "max", maxPRCreateAttempts,
 				"body", strings.TrimSpace(string(bodyBytes)))
-			time.Sleep(prCreateRetryDelay)
+			if err := forge.SleepContext(ctx, prCreateRetryDelay); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		// Already created (a prior attempt, or the caller retrying). Resolve
@@ -202,7 +203,7 @@ func (f *Forge) findExistingPullRequest(ctx context.Context, projectPath, branch
 	httpReq.Header.Set("Authorization", "Bearer "+f.Token)
 	httpReq.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := forge.HTTPClient.Do(httpReq)
 	if err != nil {
 		return "", err
 	}
@@ -234,7 +235,7 @@ func (f *Forge) defaultBranch(ctx context.Context, projectPath string) (string, 
 	httpReq.Header.Set("Authorization", "Bearer "+f.Token)
 	httpReq.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := forge.HTTPClient.Do(httpReq)
 	if err != nil {
 		return "", err
 	}
@@ -265,7 +266,7 @@ func (f *Forge) refExists(ctx context.Context, projectPath, branch string) (bool
 	httpReq.Header.Set("Authorization", "Bearer "+f.Token)
 	httpReq.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := forge.HTTPClient.Do(httpReq)
 	if err != nil {
 		return false, err
 	}
@@ -274,7 +275,7 @@ func (f *Forge) refExists(ctx context.Context, projectPath, branch string) (bool
 		return false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := forge.ReadResponseBody(resp.Body)
 		return false, fmt.Errorf("GET branch %q returned %d: %s", branch, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return true, nil

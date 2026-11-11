@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.380"
+	Version         = "0.4.460"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -638,6 +638,12 @@ func runDaemon(
 		Addr:              fmt.Sprintf("%s:%d", bindAddress, port),
 		Handler:           server,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout is intentionally left unset: synchronous exec/provision
+		// requests legitimately run for as long as their own timeout allows,
+		// and a fixed response deadline would abort them mid-operation. Their
+		// duration is bounded by per-request timeouts and request cancellation.
+		IdleTimeout: 120 * time.Second,
 	}
 
 	// Graceful shutdown
@@ -1061,7 +1067,11 @@ func buildProvisioner() (runtime.Provisioner, error) {
 		return nil, fmt.Errorf("runtime plugin loaded but its options were not bound")
 	}
 	internal.Log.Info("using_script_plugin", "plugin", scriptPluginRuntime.Name, "os", scriptPluginRuntime.OS, "isolation", scriptPluginRuntime.Isolation)
-	return scriptPluginRuntime.NewProvisioner(scriptPluginOptions), nil
+	provisioner, err := scriptPluginRuntime.NewProvisioner(scriptPluginOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build runtime provisioner: %w", err)
+	}
+	return provisioner, nil
 }
 
 // generateSessionID returns a short random hex ID unique to this daemon

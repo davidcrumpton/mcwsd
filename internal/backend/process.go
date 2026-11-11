@@ -341,6 +341,28 @@ func streamToLog(stream string, chunk []byte) (string, int64) {
 	return b.String(), int64(idx + 1)
 }
 
+// streamToLogForced is streamToLog for a chunk that filled the read cap without
+// a newline. Keeping such a partial line would mean the cursor never advances
+// (the same capped bytes are re-read forever), so the whole chunk is consumed
+// and emitted as one record. A line longer than the cap is delivered in
+// successive records rather than blocking the stream.
+func streamToLogForced(stream string, chunk []byte) (string, int64) {
+	if bytes.IndexByte(chunk, '\n') >= 0 {
+		return streamToLog(stream, chunk)
+	}
+	line := bytes.TrimSuffix(chunk, []byte{'\r'})
+	rec := processLogRecord{
+		TS:     time.Now().UTC().Format(time.RFC3339Nano),
+		Stream: stream,
+		Line:   string(line),
+	}
+	j, err := json.Marshal(rec)
+	if err != nil {
+		return "", 0
+	}
+	return string(j) + "\n", int64(len(chunk))
+}
+
 // exitLogRecord renders the terminal record appended to a job's JSON log.
 func exitLogRecord(code int) string {
 	c := code
@@ -384,6 +406,15 @@ fi`, shellQuote(jobDir))
 	res, err := wsState.handle.Transport.Exec(ctx, []string{"sh", "-c", script}, wsState.handle.WorkDir, nil)
 	if err != nil {
 		return processStateStarting, 0, err
+	}
+	if res == nil {
+		return processStateStarting, 0, fmt.Errorf("probe returned no result")
+	}
+	// A non-zero probe exit is a probe failure, not evidence about the job.
+	// Treating it as "starting" would regress a running job to queued and then
+	// fail it after jobStartTimeout while it is actually still running.
+	if res.ExitCode != 0 {
+		return processStateStarting, 0, fmt.Errorf("probe failed (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 	fields := strings.Fields(strings.TrimSpace(res.Stdout))
 	if len(fields) == 0 {
@@ -450,11 +481,15 @@ func (b *Backend) reconcileProcess(ctx context.Context, wsState *workspaceState,
 		case internal.ProcessCancelled, internal.ProcessTimedOut:
 		default:
 			proc.status = internal.ProcessFailed
+			// The supervisor died without recording an exit code. Report a
+			// failure code rather than the zero value (which means success).
+			proc.exitCode = exitCodeForTerminal(internal.ProcessFailed)
 		}
 		terminal = true
 	case processStateStarting:
 		if time.Since(startedAt) > jobStartTimeout {
 			proc.status = internal.ProcessFailed
+			proc.exitCode = exitCodeForTerminal(internal.ProcessFailed)
 			terminal = true
 		} else {
 			proc.status = internal.ProcessQueued
@@ -470,6 +505,12 @@ func (b *Backend) reconcileProcess(ctx context.Context, wsState *workspaceState,
 	}
 	proc.mu.Unlock()
 
+	if terminal && state == processStateGone {
+		// The job's supervisor died without writing exit_code (SIGKILL, OOM,
+		// runtime restart). The child process group may still be alive; signal
+		// it best-effort before finalizing so it is not orphaned unmanaged.
+		b.killJobProcessGroup(wsState, jobDir, proc.id)
+	}
 	if terminal {
 		b.finalizeJobRecord(ctx, wsState, proc)
 		if needDetach {
@@ -477,6 +518,17 @@ func (b *Backend) reconcileProcess(ctx context.Context, wsState *workspaceState,
 		}
 	}
 	return terminal, nil
+}
+
+// killJobProcessGroup signals a job's recorded process group (best-effort) on
+// a context detached from the caller, so cancellation of the triggering
+// request cannot skip it.
+func (b *Backend) killJobProcessGroup(wsState *workspaceState, jobDir, processID string) {
+	killCtx, cancel := context.WithTimeout(context.Background(), jobKillGrace+30*time.Second)
+	defer cancel()
+	if _, err := wsState.handle.Transport.Exec(killCtx, []string{"sh", "-c", buildKillCommand(jobDir)}, wsState.handle.WorkDir, nil); err != nil {
+		logger.Warn("process_orphan_kill_failed", "process_id", processID, "error", err)
+	}
 }
 
 // finalizeJobRecord captures the job's capped output tail and persists its
@@ -618,37 +670,10 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 
 	b.touch(ws.ID)
 
-	// Enforce daemon job limits before starting any work, so a rejected job
-	// costs nothing. Foreground execs are exempt.
-	if !foreground {
-		if err := b.checkJobLimits(ws.ID); err != nil {
-			return nil, err
-		}
-	}
-
 	pid := fmt.Sprintf("proc-%x", sha256.Sum256([]byte(fmt.Sprintf("%s-%d", ws.ID, time.Now().UnixNano()))))[:12]
 	jobDir := jobRuntimeDir + "/" + pid
+	key := processKey(ws.ID, pid)
 	transport := wsState.handle.Transport
-
-	// Create the job directory and (re)install the supervisor script. The
-	// script is written every launch so a changed script takes effect without
-	// re-provisioning.
-	if _, err := transport.Exec(ctx, []string{"sh", "-c", "mkdir -p " + shellQuote(jobDir)}, wsState.handle.WorkDir, nil); err != nil {
-		return nil, fmt.Errorf("failed to create job directory: %w", err)
-	}
-	if err := transport.WriteFile(ctx, supervisorPath, []byte(jobSupervisorScript), 0755); err != nil {
-		return nil, fmt.Errorf("failed to install job supervisor: %w", err)
-	}
-
-	// A network-enabled job needs the workspace attached for its whole
-	// lifetime, not just for the launch call; it is detached when the job
-	// reaches a terminal state. The reference is held until then so a
-	// concurrent Exec can't detach it early.
-	if req.AllowNetwork {
-		if err := wsState.acquireNetwork(ctx, transport, ws.ID); err != nil {
-			return nil, fmt.Errorf("failed to attach network for job: %w", err)
-		}
-	}
 
 	proc := &managedProcess{
 		id:             pid,
@@ -662,6 +687,54 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 		foreground:     foreground,
 	}
 
+	// Reserve the slot and register the job atomically. Checking the limits
+	// and inserting under the same procMu hold is what stops two concurrent
+	// starts from both observing a free slot and both launching. Foreground
+	// execs are exempt.
+	b.procMu.Lock()
+	if !foreground {
+		if err := b.checkJobLimitsLocked(ws.ID); err != nil {
+			b.procMu.Unlock()
+			return nil, err
+		}
+	}
+	b.processes[key] = proc
+	b.procMu.Unlock()
+
+	// abort unregisters a job that failed before it was launched, so a
+	// rejected start does not leave a phantom active job behind.
+	abort := func(err error) (*internal.ProcessInfo, error) {
+		b.procMu.Lock()
+		delete(b.processes, key)
+		b.procMu.Unlock()
+		return nil, err
+	}
+
+	// Create the job directory and install the supervisor script atomically
+	// (write a per-launch temp file, then rename over the shared path). A
+	// truncating in-place write could otherwise be observed half-written by a
+	// concurrent foreground exec in the same workspace.
+	if _, err := transport.Exec(ctx, []string{"sh", "-c", "mkdir -p " + shellQuote(jobDir)}, wsState.handle.WorkDir, nil); err != nil {
+		return abort(fmt.Errorf("failed to create job directory: %w", err))
+	}
+	supervisorTmp := supervisorPath + "." + pid + ".tmp"
+	if err := transport.WriteFile(ctx, supervisorTmp, []byte(jobSupervisorScript), 0755); err != nil {
+		return abort(fmt.Errorf("failed to install job supervisor: %w", err))
+	}
+	if _, err := transport.Exec(ctx, []string{"sh", "-c", "mv -f " + shellQuote(supervisorTmp) + " " + shellQuote(supervisorPath)}, wsState.handle.WorkDir, nil); err != nil {
+		return abort(fmt.Errorf("failed to install job supervisor: %w", err))
+	}
+
+	// A network-enabled job needs the workspace attached for its whole
+	// lifetime, not just for the launch call; it is detached when the job
+	// reaches a terminal state. The reference is held until then so a
+	// concurrent Exec can't detach it early.
+	if req.AllowNetwork {
+		if err := wsState.acquireNetwork(ctx, transport, ws.ID); err != nil {
+			return abort(fmt.Errorf("failed to attach network for job: %w", err))
+		}
+	}
+
 	logger.Info("process_start", "workspace_id", ws.ID, "process_id", pid,
 		"allow_network", req.AllowNetwork, "timeout_seconds", proc.timeoutSeconds,
 		"foreground", foreground, "command", fmt.Sprintf("%q", req.Command))
@@ -672,13 +745,8 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 		if req.AllowNetwork {
 			wsState.releaseNetwork(ctx, transport, ws.ID)
 		}
-		return nil, fmt.Errorf("failed to launch job: %w", err)
+		return abort(fmt.Errorf("failed to launch job: %w", err))
 	}
-
-	key := processKey(ws.ID, pid)
-	b.procMu.Lock()
-	b.processes[key] = proc
-	b.procMu.Unlock()
 
 	logger.Info("process_started", "workspace_id", ws.ID, "process_id", pid)
 
@@ -705,13 +773,15 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 	}, nil
 }
 
-// checkJobLimits refuses a new job when the daemon or the workspace is at its
-// configured concurrency limit. Only active (queued or running) jobs count.
-func (b *Backend) checkJobLimits(workspaceID string) error {
+// checkJobLimitsLocked refuses a new job when the daemon or the workspace is
+// at its configured concurrency limit. Only active (queued or running) jobs
+// count. Caller must hold procMu so the check and the caller's insertion are
+// atomic.
+func (b *Backend) checkJobLimitsLocked(workspaceID string) error {
 	if b.jobLimits.MaxPerWorkspace <= 0 && b.jobLimits.MaxTotal <= 0 {
 		return nil
 	}
-	total, perWorkspace := b.activeJobCounts()
+	total, perWorkspace := b.activeJobCountsLocked()
 	if b.jobLimits.MaxPerWorkspace > 0 && perWorkspace[workspaceID] >= b.jobLimits.MaxPerWorkspace {
 		return fmt.Errorf("workspace %s already has %d active job(s); limit is %d",
 			workspaceID, perWorkspace[workspaceID], b.jobLimits.MaxPerWorkspace)
@@ -722,31 +792,29 @@ func (b *Backend) checkJobLimits(workspaceID string) error {
 	return nil
 }
 
-// activeJobCounts returns the number of active jobs daemon-wide and per
-// workspace.
-func (b *Backend) activeJobCounts() (total int, perWorkspace map[string]int) {
+// activeJobCountsLocked returns the number of active jobs daemon-wide and per
+// workspace. Caller must hold procMu.
+func (b *Backend) activeJobCountsLocked() (total int, perWorkspace map[string]int) {
 	perWorkspace = map[string]int{}
-	type snap struct {
-		wsID       string
-		status     internal.ProcessStatus
-		foreground bool
-	}
-	b.procMu.Lock()
-	snaps := make([]snap, 0, len(b.processes))
 	for _, proc := range b.processes {
 		proc.mu.Lock()
-		snaps = append(snaps, snap{wsID: proc.workspaceID, status: proc.status, foreground: proc.foreground})
+		wsID, status, foreground := proc.workspaceID, proc.status, proc.foreground
 		proc.mu.Unlock()
-	}
-	b.procMu.Unlock()
-	for _, s := range snaps {
-		if isTerminalProcessStatus(s.status) || s.foreground {
+		if isTerminalProcessStatus(status) || foreground {
 			continue
 		}
 		total++
-		perWorkspace[s.wsID]++
+		perWorkspace[wsID]++
 	}
 	return total, perWorkspace
+}
+
+// activeJobCounts returns the number of active jobs daemon-wide and per
+// workspace.
+func (b *Backend) activeJobCounts() (total int, perWorkspace map[string]int) {
+	b.procMu.Lock()
+	defer b.procMu.Unlock()
+	return b.activeJobCountsLocked()
 }
 
 // effectiveTimeoutSeconds combines a per-request timeout with the daemon's
@@ -828,8 +896,8 @@ func (b *Backend) execAsJob(ctx context.Context, wsState *workspaceState, ws *in
 				ExitCode:   exitCode,
 				DurationMs: time.Since(start).Milliseconds(),
 			}
-			result.Stdout = b.scrubSecrets(result.Stdout, req.Secrets)
-			result.Stderr = b.scrubSecrets(result.Stderr, req.Secrets)
+			result.Stdout = b.scrubSecrets(ws.ID, result.Stdout, req.Secrets)
+			result.Stderr = b.scrubSecrets(ws.ID, result.Stderr, req.Secrets)
 			logger.Info("exec_complete", "workspace_id", ws.ID, "job_id", info.ID,
 				"exit_code", exitCode, "promoted", false, "duration_ms", result.DurationMs)
 			return result, nil
@@ -983,11 +1051,17 @@ func (b *Backend) GetProcessStatus(ctx context.Context, ws *internal.Workspace, 
 
 		if len(stdoutData) > 0 {
 			records, consumed := streamToLog("stdout", stdoutData)
+			if consumed == 0 && len(stdoutData) >= maxProcessReadBytes {
+				records, consumed = streamToLogForced("stdout", stdoutData)
+			}
 			output += records
 			cur.outOffset += consumed
 		}
 		if len(stderrData) > 0 {
 			records, consumed := streamToLog("stderr", stderrData)
+			if consumed == 0 && len(stderrData) >= maxProcessReadBytes {
+				records, consumed = streamToLogForced("stderr", stderrData)
+			}
 			output += records
 			cur.errOffset += consumed
 		}
@@ -1209,6 +1283,15 @@ func (b *Backend) RecoverJobs(ctx context.Context) {
 			foreground:     e.Foreground,
 			logTail:        e.LogTail,
 		}
+
+		// A persisted network-enabled job that was still non-terminal kept the
+		// workspace's network attached across the restart. Account for that
+		// reference before probing: if the probe finds the job already
+		// finished, finalization must be able to detach the network.
+		if e.AllowNetwork && !isTerminalProcessStatus(e.Status) {
+			wsState.adoptNetworkReference()
+		}
+
 		b.procMu.Lock()
 		b.processes[key] = proc
 		b.procMu.Unlock()
@@ -1218,16 +1301,34 @@ func (b *Backend) RecoverJobs(ctx context.Context) {
 			continue
 		}
 
-		// Re-arm the timeout for a job that is genuinely still running so a
-		// recovered job stays bounded.
+		// Re-arm the timeout for a job that is genuinely still running, using
+		// the time remaining from its original start rather than a fresh full
+		// timeout. A job already past its deadline is timed out immediately.
 		proc.mu.Lock()
-		rearm := proc.timeoutSeconds > 0 && !isTerminalProcessStatus(proc.status) && proc.timer == nil
+		timeoutSeconds := proc.timeoutSeconds
+		startedAt := proc.startedAt
+		rearm := timeoutSeconds > 0 && !isTerminalProcessStatus(proc.status) && proc.timer == nil
 		proc.mu.Unlock()
 		if rearm {
-			d := time.Duration(proc.timeoutSeconds) * time.Second
-			proc.timer = time.AfterFunc(d, func() {
+			remaining := time.Until(startedAt.Add(time.Duration(timeoutSeconds) * time.Second))
+			if remaining <= 0 {
 				b.cancelProcess(wsState, proc, internal.ProcessTimedOut)
-			})
+			} else {
+				proc.mu.Lock()
+				proc.timer = time.AfterFunc(remaining, func() {
+					b.cancelProcess(wsState, proc, internal.ProcessTimedOut)
+				})
+				proc.mu.Unlock()
+			}
+		}
+
+		// Keep watching a recovered network-enabled job so its network is
+		// detached promptly when it finishes, even if nobody polls it.
+		proc.mu.Lock()
+		watchNet := proc.allowNet && !isTerminalProcessStatus(proc.status)
+		proc.mu.Unlock()
+		if watchNet {
+			go b.watchProcess(wsState, key, proc)
 		}
 		recovered++
 	}

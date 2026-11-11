@@ -35,7 +35,10 @@ func TestZonesPluginLifecycle(t *testing.T) {
 	if err := fs.Parse([]string{"--zones-zonepath", "/rpool1/zones", "--zones-interface", "net0", "--zones-ip-address", "192.168.1.50/24", "--zones-escalation", "pfexec"}); err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := p.Provision(context.Background(), runtime.ProvisionSpec{
 		WorkspaceID: "ws-1", WorkDir: "/workspace/repo",
@@ -79,7 +82,10 @@ func TestZonesPluginRecover(t *testing.T) {
 	if err := fs.Parse([]string{"--zones-zonepath", "/rpool1/zones", "--zones-interface", "net0", "--zones-escalation", "pfexec"}); err != nil {
 		t.Fatal(err)
 	}
-	p := r.NewProvisioner(vals)
+	p, err := r.NewProvisioner(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	h, err := p.RecoverHandle(context.Background(), "wsd-ws-abc", "/workspace/repo")
 	if err != nil {

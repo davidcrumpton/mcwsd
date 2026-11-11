@@ -394,6 +394,17 @@ func ValidateRepoURL(raw string) error {
 		if strings.ContainsAny(u, " \t") {
 			return fmt.Errorf("repository URL %q contains whitespace", raw)
 		}
+		// Reject embedded credentials (https://user:token@host/...). They
+		// would otherwise be persisted in the state/jobs files, echoed in
+		// errors, and exposed through the API. Authentication belongs in the
+		// daemon's forge config, never in a request-supplied URL.
+		parsed, err := url.Parse(u)
+		if err != nil {
+			return fmt.Errorf("repository URL %q is not a valid URL: %w", raw, err)
+		}
+		if parsed.User != nil {
+			return fmt.Errorf("repository URL %q must not embed credentials; configure forge authentication instead", raw)
+		}
 		return nil
 	}
 
@@ -411,6 +422,22 @@ func ValidateRepoURL(raw string) error {
 	}
 
 	return fmt.Errorf("unsupported repository URL %q: only https://, http:// and git@host:path are allowed", raw)
+}
+
+// RedactRepoURL removes embedded credentials from an http(s) repository URL so
+// an old state entry or job record cannot leak them through logs or the API.
+// Non-http forms are returned unchanged.
+func RedactRepoURL(raw string) string {
+	u := strings.TrimSpace(raw)
+	if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+		return raw
+	}
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.User == nil {
+		return raw
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 // gitHTTPUsername returns the basic-auth username paired with the token for

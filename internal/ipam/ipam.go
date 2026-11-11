@@ -55,13 +55,26 @@ func (i *IPAM) Allocate(workspaceID string) (string, error) {
 	if ip, ok := i.allocated[workspaceID]; ok {
 		return i.render(ip), nil
 	}
-	if i.next >= i.poolSize {
-		return "", fmt.Errorf("IP pool exhausted: %d/%d addresses allocated", i.next, i.poolSize)
+	// Reuse released offsets: scan for the lowest unused slot instead of
+	// treating next as a permanent high-water mark. Without this, the pool
+	// reports exhaustion after poolSize lifetime allocations even when every
+	// address has since been released.
+	used := make(map[int]bool, len(i.allocated))
+	for _, ip := range i.allocated {
+		used[i.offset(ip)] = true
 	}
-	ip := i.add(i.next)
-	i.allocated[workspaceID] = ip
-	i.next++
-	return i.render(ip), nil
+	for off := 0; off < i.poolSize; off++ {
+		if used[off] {
+			continue
+		}
+		ip := i.add(off)
+		i.allocated[workspaceID] = ip
+		if off >= i.next {
+			i.next = off + 1
+		}
+		return i.render(ip), nil
+	}
+	return "", fmt.Errorf("IP pool exhausted: %d/%d addresses allocated", len(i.allocated), i.poolSize)
 }
 
 // Release frees the address assigned to workspaceID, if any.
