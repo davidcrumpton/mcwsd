@@ -119,6 +119,7 @@ func NewStore(path string) (*Store, error) {
 
 	var entries map[string]Entry
 	if err := json.Unmarshal(data, &entries); err != nil {
+		internal.Log.Warn("jobs_file_corrupt", "path", path, "error", err)
 		return s, nil
 	}
 	s.entries = entries

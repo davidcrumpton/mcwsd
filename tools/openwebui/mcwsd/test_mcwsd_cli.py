@@ -298,7 +298,7 @@ def cmd_full_test(tools, repo_url, ref="main"):
 
     # Step 4: List files
     print("\n[Step 4/6] Listing workspace files...")
-    cmd_list_files(tools, workspace_id, "/workspace/repo")
+    cmd_list_files(tools, workspace_id, ws_data.get("work_dir", "/workspace/repo"))
 
     # Step 5: Start a background process and poll it
     print("\n[Step 5/6] Starting a background process...")
@@ -353,6 +353,7 @@ Examples:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Global options
+    # Provisioner is unused in the code base at this time.
     parser.add_argument("--provisioner", default="", help="Specify the provisioner used by the daemon (e.g., docker, podman, apple-containers, freebsd-jails)")
 
     # prepare command

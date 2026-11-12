@@ -222,6 +222,7 @@ type ExecTransport interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 
 	// WriteFile writes content to a file inside the runtime, creating or
-	// overwriting it with the given mode.
+	// overwriting it. A non-zero mode is applied with chmod; mode 0 preserves
+	// the existing file's mode (or the runtime's default for a new file).
 	WriteFile(ctx context.Context, path string, content []byte, mode int64) error
 }

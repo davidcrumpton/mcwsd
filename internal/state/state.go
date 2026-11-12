@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/davidcrumpton/mcwsd/internal"
 )
 
 // Entry is one tracked container.
@@ -50,6 +52,10 @@ type Entry struct {
 	EnvOverrides map[string]string `json:"env_overrides,omitempty"`
 	Interface    string            `json:"interface,omitempty"`
 	IP4Address   string            `json:"ip4_address,omitempty"`
+	// Profile and CacheHit are persisted so a recovered workspace reports the
+	// same detected environment and cache status as the original.
+	Profile  *internal.EnvironmentProfile `json:"profile,omitempty"`
+	CacheHit bool                         `json:"cache_hit,omitempty"`
 
 	// lastPersisted is when LastAccessedAt was last written to disk. It is
 	// unexported so it is never serialized; it exists only to debounce
@@ -100,7 +106,9 @@ func NewStore(path string) (*Store, error) {
 		// Corrupt tracking file. Start fresh rather than refusing to boot —
 		// whatever was in there is still sitting on disk as orphaned
 		// containers findable via `docker ps -a`, we just lose the
-		// convenient index of them.
+		// convenient index of them. Log it so the operator knows automatic
+		// cleanup has been disabled.
+		internal.Log.Warn("state_file_corrupt", "path", path, "error", err)
 		return s, nil
 	}
 	s.entries = entries

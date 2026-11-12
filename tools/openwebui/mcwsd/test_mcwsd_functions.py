@@ -488,6 +488,7 @@ Examples:
     )
 
     # Global options
+    # Provisioner is unused in the code base at this time.
     parser.add_argument("--provisioner", default="", help="Specify the provisioner used by the daemon")
 
     subparsers = parser.add_subparsers(dest="test", help="Test to run")
@@ -648,7 +649,7 @@ Examples:
         test_status(args.workspace_id)
         test_exec(args.workspace_id, "echo 'Test command' && whoami")
         test_artifacts(args.workspace_id)
-        test_list_files(args.workspace_id, "/workspace/repo")
+        test_list_files(args.workspace_id, args.work_dir)
         job_id = test_start_job(args.workspace_id, "echo 'background job done'")
         if job_id:
             import time

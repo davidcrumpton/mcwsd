@@ -2,7 +2,6 @@ package backend
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,8 +37,9 @@ type provisionJob struct {
 	errMsg      string
 	// log is the combined progress log in the same JSON-lines shape shell
 	// jobs use, so the same client parser reads it.
-	log       string
-	finalized bool
+	log         string
+	maxLogBytes int64
+	finalized   bool
 }
 
 // command renders the job's command field for display and the jobs store.
@@ -69,6 +69,13 @@ func (j *provisionJob) appendLogLocked(line string) {
 		return
 	}
 	j.log += string(rec) + "\n"
+	if j.maxLogBytes > 0 && int64(len(j.log)) > j.maxLogBytes {
+		cut := len(j.log) - int(j.maxLogBytes)
+		if i := strings.IndexByte(j.log[cut:], '\n'); i >= 0 {
+			cut += i + 1
+		}
+		j.log = j.log[cut:]
+	}
 }
 
 // finish records the job's terminal state exactly once.
@@ -141,8 +148,14 @@ func (b *Backend) saveProvisionEntry(job *provisionJob) {
 // survives the calling request being cancelled or the client disconnecting.
 // timeout, when > 0, bounds the pipeline and marks it timed_out if exceeded.
 func (b *Backend) startProvisionJob(ctx context.Context, spec internal.WorkspaceSpec, timeout time.Duration) (*provisionJob, error) {
-	wsID := generateWorkspaceID()
-	jobID := fmt.Sprintf("prov-%x", sha256.Sum256([]byte(fmt.Sprintf("%s-%d", wsID, time.Now().UnixNano()))))[:12]
+	wsID, err := generateWorkspaceID()
+	if err != nil {
+		return nil, err
+	}
+	jobID, err := generateID("prov")
+	if err != nil {
+		return nil, err
+	}
 
 	job := &provisionJob{
 		id:          jobID,
@@ -150,6 +163,7 @@ func (b *Backend) startProvisionJob(ctx context.Context, spec internal.Workspace
 		repoURL:     spec.RepoURL,
 		status:      internal.ProcessQueued,
 		startedAt:   time.Now(),
+		maxLogBytes: b.jobLimits.MaxLogBytes,
 	}
 
 	// Provisioning pipelines count against the daemon-wide job limit (they did
@@ -185,6 +199,13 @@ func (b *Backend) startProvisionJob(ctx context.Context, spec internal.Workspace
 
 	go func() {
 		defer cancel()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Warn("provision_panicked", "workspace_id", job.workspaceID, "panic", r)
+				job.finish(nil, fmt.Errorf("provisioning panicked: %v", r), internal.ProcessFailed)
+				b.saveProvisionEntry(job)
+			}
+		}()
 		job.mu.Lock()
 		job.status = internal.ProcessRunning
 		job.mu.Unlock()
@@ -251,7 +272,13 @@ func (b *Backend) awaitProvisionJob(ctx context.Context, job *provisionJob, wait
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			// The provision survives client cancellation by design
+			// (WithoutCancel). Return the reserved workspace and job IDs so a
+			// caller that still receives this result can poll instead of
+			// retrying and provisioning a duplicate.
+			logger.Info("provision_client_cancelled", "workspace_id", job.workspaceID,
+				"job_id", job.id, "error", ctx.Err())
+			return &internal.ProvisionResult{WorkspaceID: job.workspaceID, JobID: job.id, Status: status}, nil
 		case <-time.After(execPromotePollInterval):
 		}
 	}
@@ -333,7 +360,10 @@ func (b *Backend) Provision(ctx context.Context, req internal.ProvisionRequest) 
 
 	// No backgrounding requested: preserve the original blocking behavior.
 	if !req.Async && wait <= 0 {
-		wsID := generateWorkspaceID()
+		wsID, err := generateWorkspaceID()
+		if err != nil {
+			return nil, err
+		}
 		ws, err := b.runProvision(ctx, wsID, req.WorkspaceSpec, nil)
 		if err != nil {
 			return nil, err
@@ -532,6 +562,8 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 		EnvOverrides:   spec.EnvOverrides,
 		Interface:      spec.Interface,
 		IP4Address:     spec.IP4Address,
+		Profile:        profile,
+		CacheHit:       cacheHit,
 		CreatedAt:      time.Now(),
 		LastAccessedAt: time.Now(),
 		WorkDir:        handle.WorkDir,

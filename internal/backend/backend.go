@@ -3,7 +3,8 @@ package backend
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -373,6 +374,24 @@ func (b *Backend) Leftovers() []state.Entry {
 	return entries
 }
 
+// WorkspaceExists reports whether a workspace is known to this daemon, either
+// as a live in-memory workspace or as a tracked leftover that has not been
+// destroyed yet. It is used by the status endpoint so a nonexistent or already
+// destroyed workspace is not reported as alive.
+func (b *Backend) WorkspaceExists(workspaceID string) bool {
+	b.mu.RLock()
+	_, live := b.workspaces[workspaceID]
+	b.mu.RUnlock()
+	if live {
+		return true
+	}
+	if b.stateStore != nil {
+		_, tracked := b.stateStore.Get(workspaceID)
+		return tracked
+	}
+	return false
+}
+
 // DestroyLeftover force-removes a container tracked in the state file by
 // container ID and clears its entry, without requiring the workspace to be
 // registered in this process's in-memory map. This is what makes cleanup
@@ -392,6 +411,7 @@ func (b *Backend) DestroyLeftover(ctx context.Context, workspaceID string) error
 	// Any job record for this workspace can no longer be running; mark the
 	// non-terminal ones interrupted so they are not reported as live.
 	b.interruptJobsForWorkspace(workspaceID, time.Now())
+	b.forgetProvisionJobsForWorkspace(workspaceID)
 
 	return b.stateStore.Remove(workspaceID)
 }
@@ -412,6 +432,12 @@ func (b *Backend) touch(workspaceID string) {
 // it works across a daemon restart too) and their state-file entries are
 // cleared. Returns the number removed and the number that failed to remove.
 func (b *Backend) Prune(ctx context.Context, ttl time.Duration) (removed, failed int) {
+	// A zero or negative TTL would make every entry look stale and destroy
+	// every workspace. Callers validate the flag; this is defense in depth.
+	if ttl <= 0 {
+		logger.Warn("prune_skipped_invalid_ttl", "ttl", ttl)
+		return 0, 0
+	}
 	cutoff := time.Now().Add(-ttl)
 	entries := b.stateStore.Stale(cutoff)
 	for _, snapshot := range entries {
@@ -498,6 +524,8 @@ func (b *Backend) RecoverWorkspaces(ctx context.Context) {
 			},
 			OS:        e.OS,
 			WorkDir:   e.WorkDir,
+			Profile:   e.Profile,
+			CacheHit:  e.CacheHit,
 			CreatedAt: e.CreatedAt,
 		}
 
@@ -660,6 +688,14 @@ func (b *Backend) Exec(ctx context.Context, ws *internal.Workspace, req internal
 	return result, nil
 }
 
+const (
+	// maxArtifactFileBytes and maxArtifactsTotalBytes bound the artifacts
+	// response. Without them a single huge generated file (or a huge diff)
+	// can exhaust the daemon's memory and the client's response buffer.
+	maxArtifactFileBytes   = 10 << 20
+	maxArtifactsTotalBytes = 32 << 20
+)
+
 // Artifacts returns diffs and new files from the workspace.
 func (b *Backend) Artifacts(ctx context.Context, ws *internal.Workspace, paths []string) ([]internal.Artifact, error) {
 	b.mu.RLock()
@@ -672,44 +708,44 @@ func (b *Backend) Artifacts(ctx context.Context, ws *internal.Workspace, paths [
 	b.touch(ws.ID)
 
 	var artifacts []internal.Artifact
+	totalBytes := 0
+	addArtifact := func(name string, content []byte, typ string) {
+		if len(content) > maxArtifactFileBytes || totalBytes+len(content) > maxArtifactsTotalBytes {
+			logger.Warn("artifact_skipped_too_large", "workspace_id", ws.ID, "name", name,
+				"bytes", len(content), "total_bytes", totalBytes)
+			return
+		}
+		artifacts = append(artifacts, internal.Artifact{Name: name, Content: content, Type: typ})
+		totalBytes += len(content)
+	}
 
-	// Get unstaged diff
-	diffArgs := []string{"git", "diff"}
+	// Get unstaged diff. "--" keeps an agent-supplied path from being parsed
+	// as a git option (e.g. --output=/some/host/path).
+	diffArgs := []string{"git", "diff", "--"}
 	diffArgs = append(diffArgs, paths...)
 	diffResult, err := wsState.handle.Transport.Exec(ctx, diffArgs, wsState.handle.WorkDir, nil)
 	if err == nil && diffResult.ExitCode == 0 && diffResult.Stdout != "" {
-		artifacts = append(artifacts, internal.Artifact{
-			Name:    "changes.patch",
-			Content: []byte(diffResult.Stdout),
-			Type:    "patch",
-		})
+		addArtifact("changes.patch", []byte(diffResult.Stdout), "patch")
 	}
 
 	// Get staged diff
 	stagedResult, err := wsState.handle.Transport.Exec(ctx, []string{"git", "diff", "--staged"}, wsState.handle.WorkDir, nil)
 	if err == nil && stagedResult.ExitCode == 0 && stagedResult.Stdout != "" {
-		artifacts = append(artifacts, internal.Artifact{
-			Name:    "staged.patch",
-			Content: []byte(stagedResult.Stdout),
-			Type:    "patch",
-		})
+		addArtifact("staged.patch", []byte(stagedResult.Stdout), "patch")
 	}
 
-	// Get untracked files
-	untrackedResult, err := wsState.handle.Transport.Exec(ctx, []string{"git", "ls-files", "--others", "--exclude-standard"}, wsState.handle.WorkDir, nil)
+	// Get untracked files. -z preserves arbitrary filenames (spaces, quotes,
+	// newlines) without git quoting them.
+	untrackedResult, err := wsState.handle.Transport.Exec(ctx, []string{"git", "ls-files", "--others", "--exclude-standard", "-z"}, wsState.handle.WorkDir, nil)
 	if err == nil && untrackedResult.ExitCode == 0 && untrackedResult.Stdout != "" {
-		files := strings.Split(strings.TrimSpace(untrackedResult.Stdout), "\n")
+		files := strings.Split(untrackedResult.Stdout, "\x00")
 		for _, file := range files {
 			if file == "" {
 				continue
 			}
 			content, err := wsState.handle.Transport.ReadFile(ctx, filepath.Join(wsState.handle.WorkDir, file))
 			if err == nil {
-				artifacts = append(artifacts, internal.Artifact{
-					Name:    file,
-					Content: content,
-					Type:    "file",
-				})
+				addArtifact(file, content, "file")
 			}
 		}
 	}
@@ -968,6 +1004,7 @@ func (b *Backend) Destroy(ctx context.Context, ws *internal.Workspace) error {
 	if b.secretBroker != nil {
 		b.secretBroker.RevokeAll(ws.ID)
 	}
+	b.forgetProvisionJobsForWorkspace(ws.ID)
 
 	logger.Info("destroy_complete", "workspace_id", ws.ID)
 	return nil
@@ -1009,8 +1046,10 @@ func (b *Backend) SafeEdit(ctx context.Context, ws *internal.Workspace, filePath
 	}
 	modified := strings.ReplaceAll(originalStr, pattern, replacement)
 
-	// 3. Write the modified content back, preserving a sensible file mode.
-	if err := wsState.handle.Transport.WriteFile(ctx, resolved, []byte(modified), 0644); err != nil {
+	// 3. Write the modified content back, preserving the existing file mode
+	//    (mode 0 means "do not chmod"). SafeEdit must not turn an executable
+	//    script into a plain 0644 file.
+	if err := wsState.handle.Transport.WriteFile(ctx, resolved, []byte(modified), 0); err != nil {
 		return fmt.Errorf("SafeEdit: write %s: %w", resolved, err)
 	}
 
@@ -1034,8 +1073,19 @@ func pinnedRepoURL(workspaceRepoURL, requested string) (string, error) {
 	return pinned, nil
 }
 
-func generateWorkspaceID() string {
-	return fmt.Sprintf("ws-%x", sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano()))))[:12]
+// generateID returns a cryptographically random, prefixed identifier. IDs are
+// not authorization tokens, but time-derived values are guessable and
+// collision-prone, so use crypto/rand for workspace, job, and process IDs.
+func generateID(prefix string) (string, error) {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate %s id: %w", prefix, err)
+	}
+	return prefix + "-" + hex.EncodeToString(b), nil
+}
+
+func generateWorkspaceID() (string, error) {
+	return generateID("ws")
 }
 
 // slugify produces a short, filesystem/branch-name-safe slug from
@@ -1216,10 +1266,12 @@ func shellQuote(s string) string {
 // (absent on OpenBSD, incomplete on FreeBSD) and uses the portable
 // `-exec ... {} +` form with a POSIX sh snippet instead. Output is one
 // tab-separated line per entry: <type>\t<size>\t<name>, where type is "d" for
-// a directory and "f" otherwise.
+// a directory and "f" for a regular file. Non-regular entries (FIFOs, sockets,
+// devices) are reported with size 0 and are never opened, so a named pipe left
+// in the repo cannot block the listing forever.
 func buildListFilesCommand(dir string) string {
 	return fmt.Sprintf(
-		`find %s -maxdepth 1 -mindepth 1 -exec sh -c 'for f do if [ -d "$f" ]; then t=d; else t=f; fi; sz=$(wc -c < "$f" 2>/dev/null | tr -d "[:space:]"); printf "%%s\t%%s\t%%s\n" "$t" "${sz:-0}" "${f##*/}"; done' sh {} +`,
+		`find %s -maxdepth 1 -mindepth 1 -exec sh -c 'for f do if [ -d "$f" ]; then t=d; sz=0; elif [ -f "$f" ]; then t=f; sz=$(wc -c < "$f" 2>/dev/null | tr -d "[:space:]"); else t=f; sz=0; fi; printf "%%s\t%%s\t%%s\n" "$t" "${sz:-0}" "${f##*/}"; done' sh {} +`,
 		shellQuote(dir),
 	)
 }

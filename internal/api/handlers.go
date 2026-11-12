@@ -511,10 +511,21 @@ func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// workspaceExister is implemented by backends that can tell whether a
+// workspace is still known (live or tracked). Kept as a narrow optional
+// interface so existing test backends do not need a new method.
+type workspaceExister interface {
+	WorkspaceExists(workspaceID string) bool
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	// Simple liveness check - in production would check actual container state
+	if ex, ok := s.backend.(workspaceExister); ok && !ex.WorkspaceExists(id) {
+		http.Error(w, "workspace not found", http.StatusNotFound)
+		return
+	}
+
 	resp := map[string]interface{}{
 		"workspace_id": id,
 		"status":       "alive",

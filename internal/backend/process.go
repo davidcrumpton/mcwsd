@@ -3,7 +3,6 @@ package backend
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -670,7 +669,10 @@ func (b *Backend) startJob(ctx context.Context, ws *internal.Workspace, req inte
 
 	b.touch(ws.ID)
 
-	pid := fmt.Sprintf("proc-%x", sha256.Sum256([]byte(fmt.Sprintf("%s-%d", ws.ID, time.Now().UnixNano()))))[:12]
+	pid, err := generateID("proc")
+	if err != nil {
+		return nil, err
+	}
 	jobDir := jobRuntimeDir + "/" + pid
 	key := processKey(ws.ID, pid)
 	transport := wsState.handle.Transport
@@ -1354,6 +1356,32 @@ func (b *Backend) PruneJobs(now time.Time) int {
 		removed++
 	}
 	return removed
+}
+
+// forgetProvisionJobsForWorkspace drops in-memory provision job records for a
+// workspace that has just been destroyed, so they do not accumulate forever
+// when retention is disabled. The persisted jobs-store record remains (and the
+// status API falls back to it) unless retention is also disabled, in which
+// case its "keep until workspace cleanup" lifetime ends here.
+func (b *Backend) forgetProvisionJobsForWorkspace(workspaceID string) {
+	b.provMu.Lock()
+	for id, job := range b.provisionJobs {
+		job.mu.Lock()
+		match := job.workspaceID == workspaceID
+		job.mu.Unlock()
+		if match {
+			delete(b.provisionJobs, id)
+		}
+	}
+	b.provMu.Unlock()
+
+	if b.jobStore != nil && b.jobLimits.Retention <= 0 {
+		for _, e := range b.jobStore.ListForWorkspace(workspaceID) {
+			if err := b.jobStore.Remove(e.ID); err != nil {
+				logger.Warn("remove_job_record_failed", "job_id", e.ID, "error", err)
+			}
+		}
+	}
 }
 
 // pruneProvisionJobs drops finished in-memory provision jobs older than the

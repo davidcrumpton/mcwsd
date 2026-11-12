@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.460"
+	Version         = "0.4.500"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -70,12 +70,24 @@ func currentUserHomeDir() (string, error) {
 // per-user workstation daemon (home-dir based, this default) or as a
 // dedicated host daemon; the latter passes explicit /var/... paths via
 // --state-file/--jobs-file instead. No /var/... path is hard-coded here.
-func wsdBaseDir() string {
+func wsdBaseDir() (string, error) {
 	homeDir, err := currentUserHomeDir()
 	if err != nil {
-		panic(err)
+		return "", err
 	}
-	return filepath.Join(homeDir, "wsd")
+	return filepath.Join(homeDir, "wsd"), nil
+}
+
+// defaultAuditFile returns ~/audit.jsonl when the home directory is
+// resolvable. An empty string lets the daemon command report the real error
+// from RunE instead of panicking at startup, so subcommands that do not need
+// the home directory (version) still work.
+func defaultAuditFile() string {
+	homeDir, err := currentUserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(homeDir, "audit.jsonl")
 }
 
 func main() {
@@ -86,10 +98,6 @@ func main() {
 	if isRoot() {
 		internal.Log.Error("ERROR: This program is not designed to run as root.\n")
 		os.Exit(1)
-	}
-	homeDir, err := currentUserHomeDir()
-	if err != nil {
-		panic(err)
 	}
 	daemonCmd := newDaemonCmd()
 	root := &cobra.Command{
@@ -113,7 +121,7 @@ func main() {
 		"Enable verbose DEBUG logging (default off)")
 	daemonCmd.Flags().BoolVar(&audit, "audit", false,
 		"Enable structured JSON audit logging (default off)")
-	daemonCmd.Flags().StringVar(&auditFile, "audit-file", filepath.Join(homeDir, "audit.jsonl"),
+	daemonCmd.Flags().StringVar(&auditFile, "audit-file", defaultAuditFile(),
 		"Audit log destination (default: ~/audit.jsonl)")
 
 	root.AddCommand(
@@ -200,9 +208,12 @@ func newDaemonCmd() *cobra.Command {
 		gitCommitName          string
 	)
 
-	homeDir, err := currentUserHomeDir()
-	if err != nil {
-		panic(err)
+	homeDir, homeErr := currentUserHomeDir()
+	baseDir := ""
+	if homeErr != nil {
+		homeDir = ""
+	} else {
+		baseDir = filepath.Join(homeDir, "wsd")
 	}
 
 	cmd := &cobra.Command{
@@ -220,11 +231,17 @@ Flags are grouped into three concerns:
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
-			var err error
-			if stateFile, err = resolvePerRuntimePath(stateFile, wsdBaseDir(), pluginName(), ".state.json"); err != nil {
+			if homeErr != nil {
+				return homeErr
+			}
+			baseDir, err := wsdBaseDir()
+			if err != nil {
 				return err
 			}
-			if jobsFile, err = resolvePerRuntimePath(jobsFile, wsdBaseDir(), pluginName(), ".jobs.json"); err != nil {
+			if stateFile, err = resolvePerRuntimePath(stateFile, baseDir, pluginName(), ".state.json"); err != nil {
+				return err
+			}
+			if jobsFile, err = resolvePerRuntimePath(jobsFile, baseDir, pluginName(), ".jobs.json"); err != nil {
 				return err
 			}
 			return runDaemon(
@@ -259,16 +276,16 @@ Flags are grouped into three concerns:
 	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript). One plugin per daemon instance — run separate instances for separate runtimes.")
 
 	// -- Backend --
-	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", filepath.Join(wsdBaseDir(), "etc", "provisioning_hints.json"),
+	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", filepath.Join(baseDir, "etc", "provisioning_hints.json"),
 		"Path to a JSON file of environment hints handed to the agent on every workspace (optional; empty disables)")
 
-	f.StringVar(&workspaceBasePath, "workspace-base-path", homeDir+"/wsd-workspaces",
+	f.StringVar(&workspaceBasePath, "workspace-base-path", filepath.Join(homeDir, "wsd-workspaces"),
 		"Base directory for workspace repos on the host")
 	f.StringVar(&bindAddress, "bind-address", "127.0.0.1",
 		"IP address to bind the HTTP server to")
 	f.IntVar(&port, "port", 8080,
 		"HTTP port to listen on")
-	f.StringVar(&cacheDir, "cache-dir", homeDir+"/wsd/cache",
+	f.StringVar(&cacheDir, "cache-dir", filepath.Join(baseDir, "cache"),
 		"Directory for dependency cache")
 	f.IntVar(&maxCacheGB, "max-cache-gb", 20,
 		"Maximum cache size in GB")
@@ -393,6 +410,23 @@ func runDaemon(
 	execWaitSeconds int,
 	provisionWaitSeconds int, provisionTimeout time.Duration,
 ) error {
+	if pruneInterval <= 0 {
+		return fmt.Errorf("--prune-interval must be greater than 0")
+	}
+	if workspaceTTL <= 0 {
+		return fmt.Errorf("--workspace-ttl must be greater than 0")
+	}
+	if (tlsCertFile == "") != (tlsKeyFile == "") {
+		return fmt.Errorf("--tls-cert-file and --tls-key-file must be set together")
+	}
+
+	// Install the signal handler before any recovery or pruning work. Without
+	// this a Ctrl-C during a slow startup kills the process before cleanup
+	// can run, potentially interrupting a workspace destroy midway.
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(shutdown)
+
 	// Hold a pid lock for the daemon's lifetime so cleanup/status can tell
 	// that the state file is owned by a live daemon and refuse to treat its
 	// workspaces as leftovers.
@@ -401,6 +435,11 @@ func runDaemon(
 		return fmt.Errorf("refusing to start daemon: %w", err)
 	}
 	defer daemonLock.Close()
+
+	if receivedShutdown(shutdown) {
+		internal.Log.Info("shutdown_signal_received")
+		return nil
+	}
 
 	// Session ID: one random ID per daemon run, stamped on every workspace
 	// this run creates. It's how a future run (or cleanup) tells "created by
@@ -630,6 +669,13 @@ func runDaemon(
 		}
 	}
 
+	// A signal received while recovery/pruning was running must stop the
+	// daemon before it starts serving requests.
+	if receivedShutdown(shutdown) {
+		internal.Log.Info("shutdown_signal_received")
+		return nil
+	}
+
 	// Create API server
 	server := api.NewServer(backend, authToken)
 
@@ -645,10 +691,6 @@ func runDaemon(
 		// duration is bounded by per-request timeouts and request cancellation.
 		IdleTimeout: 120 * time.Second,
 	}
-
-	// Graceful shutdown
-	shutdown := make(chan os.Signal, 1)
-	signal.Notify(shutdown, syscall.SIGTERM, syscall.SIGINT)
 
 	// Pruner context: cancelled on shutdown so the periodic prune loop
 	// stops with the daemon instead of spinning until its next tick.
@@ -743,11 +785,14 @@ Both flags may be combined. Neither requires forge configuration.`,
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
-			var err error
-			if stateFile, err = resolvePerRuntimePath(stateFile, wsdBaseDir(), pluginName(), ".state.json"); err != nil {
+			baseDir, err := wsdBaseDir()
+			if err != nil {
 				return err
 			}
-			if jobsFile, err = resolvePerRuntimePath(jobsFile, wsdBaseDir(), pluginName(), ".jobs.json"); err != nil {
+			if stateFile, err = resolvePerRuntimePath(stateFile, baseDir, pluginName(), ".state.json"); err != nil {
+				return err
+			}
+			if jobsFile, err = resolvePerRuntimePath(jobsFile, baseDir, pluginName(), ".jobs.json"); err != nil {
 				return err
 			}
 			return runCleanup(stateFile, jobsFile, workspaceTTL, jobRetention, doOrphans, doPrune)
@@ -780,6 +825,9 @@ Both flags may be combined. Neither requires forge configuration.`,
 func runCleanup(stateFile, jobsFile string, workspaceTTL, jobRetention time.Duration, doOrphans, doPrune bool) error {
 	if !doOrphans && !doPrune {
 		return fmt.Errorf("specify at least one of --orphans or --prune")
+	}
+	if doPrune && workspaceTTL <= 0 {
+		return fmt.Errorf("--ttl must be greater than 0")
 	}
 
 	// Refuse to run against a state file owned by a live daemon: a fresh
@@ -896,8 +944,11 @@ func newStatusCmd() *cobra.Command {
 			if scriptPluginErr != nil {
 				return scriptPluginErr
 			}
-			var err error
-			if stateFile, err = resolvePerRuntimePath(stateFile, wsdBaseDir(), pluginName(), ".state.json"); err != nil {
+			baseDir, err := wsdBaseDir()
+			if err != nil {
+				return err
+			}
+			if stateFile, err = resolvePerRuntimePath(stateFile, baseDir, pluginName(), ".state.json"); err != nil {
 				return err
 			}
 			return runStatus(stateFile)
@@ -969,6 +1020,18 @@ func newVersionCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+// receivedShutdown reports whether a termination signal is already queued.
+// It never blocks, so startup can check between expensive phases without
+// waiting for the next signal.
+func receivedShutdown(ch <-chan os.Signal) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
 
 // preScanPluginPath reads --plugin out of the raw argv before cobra has parsed
 // it, because the plugin's own flags must be registered before parsing. It

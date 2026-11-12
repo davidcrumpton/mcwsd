@@ -198,13 +198,24 @@ func (t *ExecTransport) CopyDirIn(ctx context.Context, hostSrcDir, destPath stri
 	return nil
 }
 
+// maxReadFileBytes caps a single file read pulled out of a runtime. It keeps a
+// huge repo file (or a pathological bundle) from exhausting daemon memory.
+const maxReadFileBytes = 64 << 20
+
 func (t *ExecTransport) ReadFile(ctx context.Context, path string) ([]byte, error) {
-	res, err := t.run(ctx, []string{"cat", path}, "", nil, nil, true)
+	// Read one byte past the cap so an oversized file is detected without
+	// pulling the whole thing into memory. The path is passed as an argument
+	// to sh so it is never interpreted as an option.
+	script := fmt.Sprintf(`head -c %d "$1"`, maxReadFileBytes+1)
+	res, err := t.run(ctx, []string{"sh", "-c", script, "sh", path}, "", nil, nil, true)
 	if err != nil {
 		return nil, err
 	}
 	if res.ExitCode != 0 {
 		return nil, fmt.Errorf("read %s (exit %d): %s", path, res.ExitCode, strings.TrimSpace(res.Stderr))
+	}
+	if len(res.Stdout) > maxReadFileBytes {
+		return nil, fmt.Errorf("read %s: file exceeds %d-byte limit", path, maxReadFileBytes)
 	}
 	return []byte(res.Stdout), nil
 }
@@ -224,6 +235,12 @@ func (t *ExecTransport) WriteFile(ctx context.Context, path string, content []by
 		return fmt.Errorf("write %s (exit %d): %s", path, res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 
+	// mode 0 means "preserve the existing file's mode". Redirection above
+	// truncates the file in place, so its permission bits (including exec)
+	// survive; explicitly chmod-ing to 0644 would silently drop them.
+	if mode == 0 {
+		return nil
+	}
 	if res, err := t.run(ctx, []string{"chmod", fmt.Sprintf("%o", mode), path}, "", nil, nil, true); err != nil {
 		return fmt.Errorf("chmod %s: %w", path, err)
 	} else if res.ExitCode != 0 {
