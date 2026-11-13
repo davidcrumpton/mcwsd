@@ -206,3 +206,19 @@ wsd     330   0.0 54.6 3956356 1757548  -  S    14:49       3:06.61 /usr/local/b
 **Impact:** Medium — the token is used for a mismatched forge, which can lead to authentication failures.
 
 **Proposed fix:** Ensure that the token is only used for the correct forge by checking the forge type before adding the token to the git command.  If the URL is public and doesn't match the forge we have a token for, we should not add the token to the git command.  This may require a more sophisticated URL parsing and forge matching logic in the daemon.  This may be out of scope since the tool is meant to work with the forge it is configured for.  The user should be able to configure the daemon to use the correct forge for the repository they are trying to clone.
+
+### SSH Auth Mode with HTTPS Repo URL Fails to Push
+
+When the daemon runs with `--git-auth-mode=ssh` but a workspace is provisioned from an `https://` repository URL, `commit_and_pr` fails at the push step:
+
+```text
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+```
+
+In SSH mode `GitAuthArgs` returns no credentials (`internal/gitpush/push.go`) and `GitEnv` only configures `GIT_SSH_COMMAND`, which applies to `git@host:path` remotes — never to `https://` remotes.  A public repo therefore clones anonymously all the way through provisioning, and only the host-side push fails, with a misleading "could not read Username" error rather than a clear auth-mode mismatch.
+
+This is not caused by the runtime plugin conversion; the failing path (`gitpush.PushAndOpenMR` / `backend.CommitAndPR`) is unchanged host-side code, and the in-jail `git bundle create` succeeds.
+
+**Impact:** Medium — a daemon configured for SSH auth cannot push HTTPS-provisioned workspaces, and the failure surfaces only at the end of the commit flow.
+
+**Proposed fix:** Either run with `--git-auth-mode=token` (a `GITHUB_TOKEN` is already available on the affected host) or provision from an SSH URL (`git@github.com:...`).  Additionally, fail fast in `Validate`/`runProvision` when an `https://` URL is supplied under `--git-auth-mode=ssh`, so the mismatch is reported at provision time instead of as an obscure push error.
