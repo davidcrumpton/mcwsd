@@ -25,6 +25,10 @@ See the [OpenWebUI Examples](./examples/OpenWebUI.md) directory for usage instru
 - **Runtime plugins**: The runtime layer (podman, docker, and the rest) is moving to single-purpose TypeScript plugins loaded by the daemon (`--plugin`). See [PLUGINS.md](PLUGINS.md).
 - **Changeable Runtimes**: Runtimes can be switched.  You can run `mcwsd daemon --plugin kubernetes.js` to use Kubernetes as the runtime then terminate and run `mcwsd daemon --plugin podman.js` to switch to Podman.  Previously, the daemon would mix the state from one runtime with the state from another.  This version requires a clean runtime environment -- no workspaces should exist when upgrading to this new release.
 
+## Release notes 0.4.502
+
+- **Provisioning Hints**: Environment hints are read from a text file (`provisioning_hints.txt`) and passed to the agent for each workspace.  As of 0.4.502, this is a **breaking** change from the previous JSON format.  You can keep JSON format but must specify the full filename if you used the old default.
+
 ## Quick Starts
 
 Substitute podman for docker below if you use docker.  This will create the files and directories needed for the daemon to run in the user's home directory.

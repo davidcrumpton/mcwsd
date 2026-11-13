@@ -262,7 +262,7 @@ or narrowly, for package installation only:
 permit nopass wsd as root cmd pkg_add
 ```
 
-Narrow permissions means you should update the `provisioning_hints.json` file (§7) to reflect the limited capabilities of the guest account.  You can tell the AI to read `/etc/doas.conf` or execute `sudo -l` to understand what the guest account is allowed to do.  It is great to have AI install needed packages but some things like Postgres require broader permissions so plan well if you lockdown your guest.
+Narrow permissions means you should update the `provisioning_hints.txt` file (§7) to reflect the limited capabilities of the guest account.  You can tell the AI to read `/etc/doas.conf` or execute `sudo -l` to understand what the guest account is allowed to do.  It is great to have AI install needed packages but some things like Postgres require broader permissions so plan well if you lockdown your guest.
 
 If the guest does not permit it, provisioning fails fast during the readiness
 probe with `guest login/escalation is misconfigured: doas: Operation not
@@ -270,7 +270,7 @@ permitted` rather than hanging.
 
 This is a deliberate trust decision: a full-root rule means the agent
 effectively has root inside the VM. Because the VM is isolated, that is usually
-acceptable, but the `provisioning_hints.json` file (§7) is how you tell the
+acceptable, but the `provisioning_hints.txt` file (§7) is how you tell the
 agent what it may do.
 
 Using a dedicated user rather than root is recommended: it protects against
@@ -349,7 +349,7 @@ su -m _wsd -c 'mcwsd daemon \
 | `-openbsd-guest-escalation-command` | `doas` | Guest escalation for commands run inside the VM (empty = run directly; ignored when the login user is root) |
 | `-openbsd-boot-timeout` | `5m` | Total time to wait for SSH readiness (ARP → TCP → SSH) |
 | `-openbsd-ssh-probe-timeout` | `20s` | Bound on a single SSH readiness probe |
-| `-provisioning-hints-file` | `/etc/wsd/provisioning_hints.json` | Agent environment hints (optional) |
+| `-provisioning-hints-file` | `/etc/wsd/provisioning_hints.txt` | Agent environment hints (optional) |
 
 The `-openbsd-*` flags are ignored by the Docker, Podman, and jail runtimes but the app doesn't error to hint you left unusable options in.
 

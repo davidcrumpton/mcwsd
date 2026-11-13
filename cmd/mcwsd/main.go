@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.500"
+	Version         = "0.4.502"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -276,8 +276,8 @@ Flags are grouped into three concerns:
 	f.StringVar(&pluginFlag, "plugin", "", "Path to a single .js runtime plugin (compiled from TypeScript). One plugin per daemon instance — run separate instances for separate runtimes.")
 
 	// -- Backend --
-	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", filepath.Join(baseDir, "etc", "provisioning_hints.json"),
-		"Path to a JSON file of environment hints handed to the agent on every workspace (optional; empty disables)")
+	f.StringVar(&provisioningHintsFile, "provisioning-hints-file", filepath.Join(baseDir, "etc", "provisioning_hints.txt"),
+		"Path to a text file of environment hints handed to the agent on every workspace (optional; empty disables)")
 
 	f.StringVar(&workspaceBasePath, "workspace-base-path", filepath.Join(homeDir, "wsd-workspaces"),
 		"Base directory for workspace repos on the host")

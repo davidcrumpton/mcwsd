@@ -222,3 +222,5 @@ This is not caused by the runtime plugin conversion; the failing path (`gitpush.
 **Impact:** Medium — a daemon configured for SSH auth cannot push HTTPS-provisioned workspaces, and the failure surfaces only at the end of the commit flow.
 
 **Proposed fix:** Either run with `--git-auth-mode=token` (a `GITHUB_TOKEN` is already available on the affected host) or provision from an SSH URL (`git@github.com:...`).  Additionally, fail fast in `Validate`/`runProvision` when an `https://` URL is supplied under `--git-auth-mode=ssh`, so the mismatch is reported at provision time instead of as an obscure push error.
+
+**Alternate fix:** Add an option to control the decision when both HTTP and SSH options are present: `fail` (the daemon exits with an error by default), `forceToHTTP`, or `forceToSSH`.  How do we know the URL?  We could guess, but the URLs can be different for the SSH intake, unusual but possible.  At least, if we got an SSH URL and the admin wants to forceToHTTP, we can convert it to the corresponding HTTPS URL as long as the base URL is specified.  This option really requires base URLs specified so the daemon doesn't guess something wrong.

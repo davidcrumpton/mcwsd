@@ -256,7 +256,7 @@ These control basic daemon behavior and resource management.
 ### `--provisioning-hints-file`
 
 - Type: string
-- Default: `/etc/wsd/provisioning_hints.json`
+- Default: `/etc/wsd/provisioning_hints.txt`
 - Local path to a JSON file containing environment hints passed to the agent for each workspace.
 
 ### `--workspace-base-path`

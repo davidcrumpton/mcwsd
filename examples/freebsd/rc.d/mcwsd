@@ -35,7 +35,7 @@ load_rc_config $name
 : ${mcwsd_cache_dir:="/home/wsd/cache"}
 : ${mcwsd_state_file:="/home/wsd/state.json"}
 : ${mcwsd_bind_address:="0.0.0.0"}
-: ${mcwsd_provisioning_hints_file:="/usr/local/etc/wsd/provisioning_hints.json"}
+: ${mcwsd_provisioning_hints_file:="/usr/local/etc/wsd/provisioning_hints.txt"}
 : ${mcwsd_max_cache_gb:="20"}
 : ${mcwsd_workspace_ttl:="24h"}
 : ${mcwsd_prune_interval:="1h"}
