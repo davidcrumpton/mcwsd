@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.562"
+	Version         = "0.4.563"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -188,6 +188,7 @@ func newDaemonCmd() *cobra.Command {
 	// ---- forge / git auth flags ----
 	var (
 		gitAuthMode            string
+		gitPushURLPolicy       string
 		gitForgeType           string
 		gitSSHKeyPathEnvVar    string
 		gitSSHKnownHostsEnvVar string
@@ -249,7 +250,7 @@ Flags are grouped into three concerns:
 				stateFile, workspaceTTL, pruneInterval, pruneOnStartup,
 				tlsCertFile, tlsKeyFile,
 				capacityMemoryPercent, capacitySwapPercent, capacityCPUPercent, capacityFilesystems, capacityMaxWorkspaces,
-				gitAuthMode, gitForgeType,
+				gitAuthMode, gitPushURLPolicy, gitForgeType,
 				gitSSHKeyPathEnvVar, gitSSHKnownHostsEnvVar,
 				gitlabTokenEnvVar, gitlabTokenUsername, gitlabAPIBase, gitlabProjectPath,
 				gitHubTokenEnvVar, gitHubAPIBase, gitHubProjectPath,
@@ -344,6 +345,8 @@ Flags are grouped into three concerns:
 	// visible to any local user via `ps`.
 	f.StringVar(&gitAuthMode, "git-auth-mode", os.Getenv("MCWSD_GIT_AUTH_MODE"),
 		`Git push auth mode: "ssh" or "token". Leave unset to disable commit_and_pr.`)
+	f.StringVar(&gitPushURLPolicy, "git-push-url-policy", os.Getenv("MCWSD_GIT_PUSH_URL_POLICY"),
+		`How to reconcile a repo URL with --git-auth-mode for commit_and_pr: "fail" (default) or "convert". Does not affect read-only provisioning.`)
 	f.StringVar(&gitForgeType, "forge-type", os.Getenv("MCWSD_GIT_FORGE_TYPE"),
 		"Forge type: gitlab, github, gitea, or forgejo")
 	f.StringVar(&gitSSHKeyPathEnvVar, "git-ssh-key-path-env-var", "MCWSD_GIT_SSH_KEY_PATH",
@@ -399,7 +402,7 @@ func runDaemon(
 	capacityMemoryPercent, capacitySwapPercent, capacityCPUPercent float64,
 	capacityFilesystems string,
 	capacityMaxWorkspaces int,
-	gitAuthMode, gitForgeType string,
+	gitAuthMode, gitPushURLPolicy, gitForgeType string,
 	gitSSHKeyPathEnvVar, gitSSHKnownHostsEnvVar string,
 	gitlabTokenEnvVar, gitlabTokenUsername, gitlabAPIBase, gitlabProjectPath string,
 	gitHubTokenEnvVar, gitHubAPIBase, gitHubProjectPath string,
@@ -474,6 +477,7 @@ func runDaemon(
 	// themselves, which only carry env var *names* and non-secret settings.
 	gitCfg := gitpush.Config{
 		AuthMode:            gitpush.AuthMode(gitAuthMode),
+		PushURLPolicy:       gitpush.PushURLPolicy(gitPushURLPolicy),
 		ForgeType:           gitForgeType,
 		SSHKeyPath:          os.Getenv(gitSSHKeyPathEnvVar),
 		SSHKnownHostsPath:   os.Getenv(gitSSHKnownHostsEnvVar),
@@ -493,7 +497,7 @@ func runDaemon(
 	}
 
 	if gitAuthMode == "" {
-		if gitForgeType != "" || gitlabAPIBase != "" || gitlabProjectPath != "" ||
+		if gitPushURLPolicy != "" || gitForgeType != "" || gitlabAPIBase != "" || gitlabProjectPath != "" ||
 			gitHubAPIBase != "" || gitHubProjectPath != "" || giteaAPIBase != "" ||
 			giteaProjectPath != "" || forgejoAPIBase != "" || forgejoProjectPath != "" ||
 			os.Getenv(gitSSHKeyPathEnvVar) != "" || os.Getenv(gitSSHKnownHostsEnvVar) != "" ||
@@ -529,6 +533,7 @@ func runDaemon(
 		}
 		internal.Log.Info("git_auth_configured",
 			"mode", gitAuthMode,
+			"push_url_policy", string(gitCfg.PushURLPolicy),
 			"forge_type", forge,
 			"api_base", apiBase,
 			"project_path", projectPath)
