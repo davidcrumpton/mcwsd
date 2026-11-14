@@ -1,7 +1,7 @@
 """
 title: Workspace Daemon (mcwsd)
 description: Prepare ephemeral dev workspaces, run commands, pull diffs, and tear down via the local mcwsd Go daemon.
-version: 0.3.7
+version: 0.3.8
 """
 
 import json
