@@ -278,6 +278,7 @@ func (cs *callState) unwind() {
 func specToJS(spec runtime.ProvisionSpec) map[string]interface{} {
 	return map[string]interface{}{
 		"workspace_id":        spec.WorkspaceID,
+		"instance_id":         spec.InstanceID,
 		"image":               spec.Image,
 		"work_dir":            spec.WorkDir,
 		"cache_mount_path":    spec.CacheMountPath,

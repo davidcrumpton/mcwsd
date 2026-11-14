@@ -3,7 +3,7 @@ function str(v) {
   return typeof v === "string" ? v : v === void 0 || v === null ? "" : String(v);
 }
 const workspacePath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/local/bin";
-const accountNameRE = /^ws-[0-9a-f]{9}$/;
+const accountNameRE = /^(ac-[0-9a-f]{12}|ws-[0-9a-f]{9,12})$/;
 const safeNameRE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const workspacePrefix = "/workspace";
 function homeBase() {
@@ -39,8 +39,8 @@ function validateWorkspaceID(id) {
 }
 function validateAccountName(name) {
   validateWorkspaceID(name);
-  if (name.indexOf("ws-") !== 0) {
-    throw new Error("account name " + JSON.stringify(name) + ' must start with "ws-"');
+  if (!isWorkspaceAccount(name)) {
+    throw new Error("account name " + JSON.stringify(name) + " is not managed by this plugin");
   }
 }
 function isWorkspaceAccount(name) {
@@ -184,9 +184,11 @@ const netbsdAccountPlugin = {
     }
   },
   provision(spec) {
-    const workspaceID = str(spec.workspace_id);
-    validateWorkspaceID(workspaceID);
-    const account = workspaceID;
+    const account = str(spec.instance_id);
+    if (account === "") {
+      throw new Error("netbsd-account requires core to provide a non-empty instance_id");
+    }
+    validateAccountName(account);
     const home = homeBase() + "/" + account;
     const shell = accountShell();
     const cls = loginClassOpt();
@@ -217,10 +219,6 @@ const netbsdAccountPlugin = {
   },
   destroyByID(id) {
     destroyAccount(id, homeBase() + "/" + id);
-  },
-  destroyWorkspaceByID(workspaceID) {
-    validateWorkspaceID(workspaceID);
-    destroyAccount(workspaceID, homeBase() + "/" + workspaceID);
   },
   recover(nativeID, workDir) {
     validateAccountName(nativeID);

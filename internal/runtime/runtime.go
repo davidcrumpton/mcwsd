@@ -83,9 +83,18 @@ type RuntimeHandle struct {
 // reference should be interpreted — that orchestration happens above this
 // interface.
 type ProvisionSpec struct {
-	// WorkspaceID names the workspace being provisioned; provisioners use
-	// it to name/tag the underlying resource.
+	// WorkspaceID names the workspace being provisioned. It is public: the
+	// API exposes it and every workspace can learn its own ID. Provisioners
+	// should not use it for anything visible from inside the workspace.
 	WorkspaceID string
+
+	// InstanceID is an opaque, randomly generated identity for this
+	// provisioned runtime instance, independent of WorkspaceID. Provisioners
+	// whose backing resource name is observable inside the workspace (local
+	// account names, jail/zone names, ...) must use this instead of
+	// WorkspaceID, so enumerating the host cannot reveal another workspace's
+	// public ID.
+	InstanceID string
 
 	// Image is a reference to the base image or template to provision
 	// from, e.g. a Docker image tag. Its meaning is provisioner-specific.

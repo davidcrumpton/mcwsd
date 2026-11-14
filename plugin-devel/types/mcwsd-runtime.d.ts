@@ -89,6 +89,11 @@ export interface PluginOption {
 
 export interface ProvisionSpec {
   workspace_id: string;
+  /** Opaque, randomly generated identity for this runtime instance,
+   *  independent of workspace_id. Use this for any host-visible resource name
+   *  (account, jail, zone, ...) so a workspace cannot learn another
+   *  workspace's public ID by enumerating the host. */
+  instance_id: string;
   image: string;
   work_dir: string;
   cache_mount_path: string;

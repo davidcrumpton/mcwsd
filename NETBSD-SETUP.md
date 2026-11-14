@@ -16,29 +16,33 @@ pkgsrc: **sudo** (recommended) or **doas**.
 ## 1. How mcwsd uses the host
 
 1. **Provision.** For each workspace it creates a group and an account named
-   after the workspace id (`ws-XXXXXXXXX`, the 12-character id core generates),
-   e.g. `groupadd ws-abc123456` then
-   `useradd -d /home/ws-abc123456 -m -M 700 -g ws-abc123456 -G wsd -s /sbin/nologin ws-abc123456`.
-   The account's home directory *is* the workspace: core's fixed in-runtime
-   path `/workspace` is remapped onto it, so the repo lives at
-   `/home/ws-abc123456/repo` and is owned by the account.
+   after a random **instance id** core assigns to the runtime, *not* the public
+   workspace id (`ac-XXXXXXXXXXXX`, 15 characters), e.g. `groupadd
+   ac-abc123456789` then `useradd -d /home/ac-abc123456789 -m -M 700 -g
+   ac-abc123456789 -G wsd -s /sbin/nologin ac-abc123456789`. The account's home
+   directory *is* the workspace: core's fixed in-runtime path `/workspace` is
+   remapped onto it, so the repo lives at `/home/ac-abc123456789/repo` and is
+   owned by the account.
 2. **Exec.** Every command — user commands and core's own file I/O
    (copy-in, read, write) — runs as the account via
-   `sudo -u ws-abc123456 sh -c 'cd <home>/repo && …'`. The account never gets
+   `sudo -u ac-abc123456789 sh -c 'cd <home>/repo && …'`. The account never gets
    its own escalation.
-3. **Destroy.** `userdel -r ws-abc123456` and `groupdel ws-abc123456`; the home
-   (and any workspace tree beneath it) is removed.
+3. **Destroy.** `userdel -r ac-abc123456789` and `groupdel ac-abc123456789`; the
+   home (and any workspace tree beneath it) is removed.
 
-Account names are exactly the workspace id (12 chars), well under NetBSD's
-16-character `LOGIN_NAME_MAX`. They are matched precisely (`^ws-[0-9a-f]{9}$`)
-for orphan cleanup, so unrelated accounts are never touched.
+Account names are opaque instance ids (15 chars, at NetBSD's 16-character
+`LOGIN_NAME_MAX` limit). Because they are not derived from the public workspace
+id, listing `/home` or `/etc/passwd` does not reveal other workspaces' API ids.
+New accounts match `^ac-[0-9a-f]{12}$`; legacy accounts from releases that
+named accounts after the workspace id match `^ws-[0-9a-f]{9,12}$`. Orphan
+cleanup only touches these shapes, so unrelated accounts are never touched.
 
 ### Paths
 
 | Path | Purpose |
 |------|---------|
-| `/home/ws-XXXXXXXXX/` | Workspace root (the account's home, mode 0700) |
-| `/home/ws-XXXXXXXXX/repo/` | The workspace repository (`/workspace/repo` remapped) |
+| `/home/ac-XXXXXXXXXXXX/` | Workspace root (the account's home, mode 0700) |
+| `/home/ac-XXXXXXXXXXXX/repo/` | The workspace repository (`/workspace/repo` remapped) |
 
 ---
 
@@ -89,7 +93,7 @@ _wsd ALL=(root) NOPASSWD: /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/groupa
 _wsd ALL=(%wsd) NOPASSWD: ALL
 ```
 
-The second rule is what makes `sudo -u ws-XXXXXXXXX …` work for a *dynamic*
+The second rule is what makes `sudo -u ac-XXXXXXXXXXXX …` work for a *dynamic*
 set of accounts without editing sudoers per workspace. Because it is scoped to
 `%wsd`, the daemon can only become workspace accounts, not root or other host
 users.
@@ -101,7 +105,7 @@ users.
 
 `doas` is a pkgsrc port (`security/doas`) and takes the same `-u` shape. The
 catch is authorizing run-as-dynamic-accounts: OpenBSD's doas.conf has no
-group run-as, so you would either add a `permit nopass _wsd as ws-XXXXXXXXX
+group run-as, so you would either add a `permit nopass _wsd as ac-XXXXXXXXXXXX
 cmd sh` line per workspace (fragile) or grant `permit nopass _wsd as root cmd su`
 and drop with `su -m`, which **does not apply login-class resource limits**.
 Prefer sudo unless you have a reason to accept those tradeoffs.
@@ -181,6 +185,11 @@ it as a convenience for a single trusted tenant, not a boundary:
 
 - **No filesystem isolation.** `/etc/passwd`, `/tmp`, and any world-readable
   file are visible. Workspace accounts are separated only by uid + home 0700.
+- **Workspace IDs are not enumerable.** Accounts are named after random
+  instance ids, not public workspace ids, so listing `/home` or `/etc/passwd`
+  does not hand an agent another workspace's API id. This is defense in depth:
+  it does not change the fact that any holder of the daemon's shared bearer
+  token can act on any workspace id it already knows.
 - **No network isolation.** Workspaces share the host network and can reach
   localhost services; `setNetwork` is a no-op (always on).
 - **No escalation by default.** Workspace accounts have no sudo/doas. They can

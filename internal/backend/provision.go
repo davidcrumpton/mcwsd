@@ -533,9 +533,19 @@ func (b *Backend) runProvision(ctx context.Context, wsID string, spec internal.W
 	// container and hand back a normalized handle. Everything after this
 	// (copying the repo in, running install/post-create, cutting network
 	// access) is generic orchestration done through the handle's Transport.
+	// The backing runtime gets its own random identity, distinct from the
+	// public workspace ID. Process/jail/zone runtimes name host-visible
+	// resources after it, so a workspace cannot discover another workspace's
+	// public ID by enumerating local accounts or resources.
+	instanceID, err := generateID("ac")
+	if err != nil {
+		return nil, err
+	}
+
 	repoPath := "/workspace/repo"
 	handle, err := b.provisioner.Provision(ctx, runtime.ProvisionSpec{
 		WorkspaceID:       wsID,
+		InstanceID:        instanceID,
 		Image:             profile.BaseImage,
 		WorkDir:           repoPath,
 		CacheMountPath:    cacheMount,

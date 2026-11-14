@@ -17,9 +17,11 @@ import type { RuntimePlugin, ProvisionSpec, Handle, ExecArgsOptions } from "../.
  *     "<escalator> -u <account> sh -c ...". Core's opts.root is deliberately
  *     ignored: in this model there is no sandbox root to act as, and writing
  *     files as the account is what keeps them editable by the workspace.
- *   - The account's home directory IS the workspace. Core's fixed in-runtime
- *     path "/workspace" is remapped onto the account's home, so the repo lands
- *     at <home>/repo and is owned by the account.
+ *   - The account's home directory IS the workspace. The account is named
+ *     after a random instance id core assigns, *not* the public workspace id,
+ *     so /home and /etc/passwd do not reveal other workspaces' IDs. Core's
+ *     fixed in-runtime path "/workspace" is remapped onto the account's home,
+ *     so the repo lands at <home>/repo and is owned by the account.
  *
  * Options:
  *   --account-home-base     base dir for workspace accounts (default /home)
@@ -43,9 +45,11 @@ function str(v: unknown): string {
 // include them, so a full PATH is set explicitly on the remote shell.
 const workspacePath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/local/bin";
 
-// accountNameRE matches the exact shape core generates (generateWorkspaceID ->
-// "ws-" + 9 lowercase hex), so cleanupOrphans only ever touches our accounts.
-const accountNameRE = /^ws-[0-9a-f]{9}$/;
+// accountNameRE matches the opaque names this plugin creates ("ac-" + 12
+// lowercase hex, from core's random instance id) and the legacy "ws-" accounts
+// earlier releases named after the workspace id, so cleanupOrphans only ever
+// touches our accounts.
+const accountNameRE = /^(ac-[0-9a-f]{12}|ws-[0-9a-f]{9,12})$/;
 const safeNameRE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 // core's fixed in-runtime workspace path, remapped onto the account home.
@@ -97,8 +101,8 @@ function validateWorkspaceID(id: string): void {
 
 function validateAccountName(name: string): void {
   validateWorkspaceID(name);
-  if (name.indexOf("ws-") !== 0) {
-    throw new Error("account name " + JSON.stringify(name) + " must start with \"ws-\"");
+  if (!isWorkspaceAccount(name)) {
+    throw new Error("account name " + JSON.stringify(name) + " is not managed by this plugin");
   }
 }
 
@@ -275,10 +279,12 @@ const netbsdAccountPlugin: RuntimePlugin = {
   },
 
   provision(spec: ProvisionSpec): Handle {
-    const workspaceID = str(spec.workspace_id);
-    validateWorkspaceID(workspaceID);
+    const account = str(spec.instance_id);
+    if (account === "") {
+      throw new Error("netbsd-account requires core to provide a non-empty instance_id");
+    }
+    validateAccountName(account);
 
-    const account = workspaceID;
     const home = homeBase() + "/" + account;
     const shell = accountShell();
     const cls = loginClassOpt();
@@ -317,11 +323,6 @@ const netbsdAccountPlugin: RuntimePlugin = {
 
   destroyByID(id: string): void {
     destroyAccount(id, homeBase() + "/" + id);
-  },
-
-  destroyWorkspaceByID(workspaceID: string): void {
-    validateWorkspaceID(workspaceID);
-    destroyAccount(workspaceID, homeBase() + "/" + workspaceID);
   },
 
   recover(nativeID: string, workDir: string): Handle {

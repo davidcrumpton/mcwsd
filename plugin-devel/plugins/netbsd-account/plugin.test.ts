@@ -13,10 +13,9 @@ const plugin = pluginModule as unknown as {
   binaries: string[];
   options: { flag: string }[];
   validate: () => void;
-  provision: (spec: { workspace_id: string; work_dir: string }) => { native_id: string; work_dir: string; username: string; privilege: string; home: string };
+  provision: (spec: { workspace_id: string; instance_id: string; work_dir: string }) => { native_id: string; work_dir: string; username: string; privilege: string; home: string };
   destroy: (h: { native_id: string; home: string }) => void;
   destroyByID: (id: string) => void;
-  destroyWorkspaceByID: (id: string) => void;
   recover: (id: string, workDir: string) => { native_id: string; home: string; username: string; work_dir: string };
   cleanupOrphans: (keep: string[]) => number;
   execArgs: (h: { username: string; home: string }, cmd: string[], wd: string, env: string[], o: { stdin: boolean; root: boolean }) => string[];
@@ -29,7 +28,8 @@ const hostOptions = {
   "account-login-class": "",
 };
 
-const account = "ws-abc123456";
+const workspaceID = "ws-0123456789ab";
+const account = "ac-abc123456789";
 const home = "/home/" + account;
 
 function mockRun(captured: string[][], result?: { stdout?: string; stderr?: string; exit_code?: number }) {
@@ -113,7 +113,7 @@ describe("netbsd-account plugin", () => {
     const runs: string[][] = [];
     installMockHost({ options: hostOptions, run: mockRun(runs) });
 
-    const handle = plugin.provision({ workspace_id: account, work_dir: "/workspace/repo" });
+    const handle = plugin.provision({ workspace_id: workspaceID, instance_id: account, work_dir: "/workspace/repo" });
 
     expect(handle.native_id).toBe(account);
     expect(handle.username).toBe(account);
@@ -126,6 +126,13 @@ describe("netbsd-account plugin", () => {
       "sudo", "useradd", "-d", home, "-m", "-M", "700", "-g", account, "-G", "wsd", "-s", "/sbin/nologin", account,
     ]);
     expect(runs[2]).toEqual(["sudo", "chown", "-R", account + ":" + account, home]);
+    expect(handle.native_id).not.toBe(workspaceID);
+    expect(handle.home).not.toContain(workspaceID);
+  });
+
+  it("requires core to provide an opaque instance id", () => {
+    installMockHost({ options: hostOptions, run: mockRun([]) });
+    expect(() => plugin.provision({ workspace_id: workspaceID, instance_id: "", work_dir: "/workspace/repo" })).toThrow(/instance_id/);
   });
 
   it("appends -L when a login class is configured", () => {
@@ -134,7 +141,7 @@ describe("netbsd-account plugin", () => {
       options: { ...hostOptions, "account-login-class": "daemon" },
       run: mockRun(runs),
     });
-    plugin.provision({ workspace_id: account, work_dir: "/workspace/repo" });
+    plugin.provision({ workspace_id: workspaceID, instance_id: account, work_dir: "/workspace/repo" });
     expect(runs[1]).toEqual([
       "sudo", "useradd", "-d", home, "-m", "-M", "700", "-g", account, "-G", "wsd", "-s", "/sbin/nologin",
       "-L", "daemon", account,
@@ -216,7 +223,8 @@ describe("netbsd-account plugin", () => {
       "root:x:0:0:Charlie &:/root:/bin/sh",
       account + ":x:1000:1000::" + home + ":/sbin/nologin",
       "ws-fffffffff:x:1001:1001::/home/ws-fffffffff:/sbin/nologin",
-      "someone:x:1002:1002::/home/someone:/bin/sh",
+      "ac-ffffffffffff:x:1002:1002::/home/ac-ffffffffffff:/sbin/nologin",
+      "someone:x:1003:1003::/home/someone:/bin/sh",
     ].join("\n");
 
     const runs: string[][] = [];
@@ -230,9 +238,16 @@ describe("netbsd-account plugin", () => {
     });
 
     const removed = plugin.cleanupOrphans([account]);
-    expect(removed).toBe(1);
+    expect(removed).toBe(2);
     expect(runs[0]).toEqual(["cat", "/etc/passwd"]);
-    // Only the orphan ws-fffffffff is destroyed; ws-abc123456 is kept.
+    // The current account is kept; both a legacy ws- orphan and a new ac-
+    // orphan are destroyed, and the unrelated "someone" account is untouched.
     expect(runs[1]).toEqual(["sudo", "userdel", "-r", "ws-fffffffff"]);
+    expect(runs[4]).toEqual(["sudo", "userdel", "-r", "ac-ffffffffffff"]);
+  });
+
+  it("no longer exports destroyWorkspaceByID", () => {
+    const p = pluginModule as unknown as { destroyWorkspaceByID?: unknown };
+    expect(p.destroyWorkspaceByID).toBeUndefined();
   });
 });
