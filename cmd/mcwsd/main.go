@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -1191,8 +1192,8 @@ func loadProvisioningHints(path string) (string, error) {
 	if len(trimmed) == 0 {
 		return "", nil
 	}
-	// if !json.Valid(trimmed) {
-	// 	return "", fmt.Errorf("%s is not valid JSON", path)
-	// }
+	// validate JSON only if ext is .json
+	if strings.EqualFold(filepath.Ext(path), ".json") && !json.Valid(trimmed) {
+		return "", fmt.Errorf("%s is not valid JSON", path)}
 	return string(trimmed), nil
 }
