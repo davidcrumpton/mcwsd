@@ -4,6 +4,7 @@ Individual CLI tools for testing mcwsd functions.
 Each tool can be run independently with its specific arguments.
 """
 
+import os
 import sys
 import json
 import argparse
@@ -14,10 +15,20 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from mcwsd import Tools
 
+# Bound from --workspace-token / MCWSD_WORKSPACE_TOKEN and the subcommand's
+# workspace_id so strict-mode daemons work for one-off test invocations.
+_workspace_token = ""
+_workspace_id = ""
+
 
 def get_tools():
-    """Initialize tools with default valves."""
+    """Initialize tools with default valves and environment overrides."""
     tools = Tools()
+    tools.valves.base_url = os.getenv("MCWSD_BASE_URL", "http://localhost:9080")
+    tools.valves.token = os.getenv("MCWSD_TOKEN", "")
+    tools.valves.timeout_seconds = int(os.getenv("MCWSD_TIMEOUT", 60))
+    if _workspace_id and _workspace_token:
+        tools._bind_workspace_token(_workspace_id, _workspace_token)
     return tools
 
 
@@ -490,6 +501,11 @@ Examples:
     # Global options
     # Provisioner is unused in the code base at this time.
     parser.add_argument("--provisioner", default="", help="Specify the provisioner used by the daemon")
+    parser.add_argument(
+        "--workspace-token",
+        default=os.getenv("MCWSD_WORKSPACE_TOKEN", ""),
+        help="Workspace token for strict mode (or set MCWSD_WORKSPACE_TOKEN). Not needed for prepare, which learns it automatically.",
+    )
 
     subparsers = parser.add_subparsers(dest="test", help="Test to run")
 
@@ -600,6 +616,9 @@ Examples:
     if not args.test:
         parser.print_help()
         sys.exit(1)
+
+    _workspace_token = args.workspace_token
+    _workspace_id = getattr(args, "workspace_id", "")
 
     success = True
 

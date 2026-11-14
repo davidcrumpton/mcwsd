@@ -221,6 +221,7 @@ path. Configure the rc service as shown below, or run the daemon directly:
 
 ```sh
 mcwsd daemon --plugin /usr/local/lib/mcwsd/plugins/freebsd-jail.js \
+  --workspace-auth-mode=scoped \
   --base-template-url https://templates.example.org/freebsd \
   --freebsd-release organization-15.1-v2.tgz \
   --verify-signature \
@@ -436,6 +437,7 @@ To pin an address, pass the interface and address:
 
 ```sh
 mcwsd daemon --plugin plugins/freebsd-jail.js \
+    --workspace-auth-mode=scoped \
     --freebsd-interface vtnet0 \
     --freebsd-ip4-address 192.168.122.100
 ```
@@ -463,6 +465,7 @@ For DHCP configuration, only the interface and network mode are required:
 
 ```sh
 mcwsd daemon --plugin plugins/freebsd-jail.js \
+  --workspace-auth-mode=scoped \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
   --port 9080
@@ -477,6 +480,7 @@ and explicit DNS servers:
 
 ```sh
 mcwsd daemon --plugin plugins/freebsd-jail.js \
+  --workspace-auth-mode=scoped \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
   --freebsd-ip4-address 192.168.122.100/24 \
@@ -491,6 +495,7 @@ For automatic IP allocation from a pool, configure a base network and pool size:
 
 ```sh
 mcwsd daemon --plugin plugins/freebsd-jail.js \
+  --workspace-auth-mode=scoped \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
   --ip-base-network 192.168.1.200/24 \
@@ -507,6 +512,7 @@ You can also configure custom DNS servers for all jails:
 
 ```sh
 mcwsd daemon --plugin plugins/freebsd-jail.js \
+  --workspace-auth-mode=scoped \
   --freebsd-network-mode vnet \
   --freebsd-interface em0 \
   --ip-base-network 192.168.122.200/24 \
@@ -682,6 +688,7 @@ DHCP, default release, no fixed IP:
 ```sh
 MCWSD_TOKEN="$(openssl rand -hex 16)" \
 mcwsd daemon --plugin plugins/freebsd-jail.js --freebsd-release 15.1-RELEASE \
+ --workspace-auth-mode=scoped \
  --workspace-base-path /home/wsd --cache-dir /var/lib/wsd/cache  \
  --state-file /var/lib/wsd/state.json --port 9080
 ```
@@ -1000,6 +1007,7 @@ procname="/usr/local/bin/mcwsd"
 
 command="/usr/sbin/daemon"
 command_args="-f -p ${pidfile} -o /var/log/${name}.log /usr/local/bin/mcwsd daemon"
+command_args="${command_args} --workspace-auth-mode=scoped"
 command_args="${command_args} --port ${mcwsd_port}"
 command_args="${command_args} --workspace-base-path ${mcwsd_workspace_base_path}"
 command_args="${command_args} --cache-dir ${mcwsd_cache_dir}"

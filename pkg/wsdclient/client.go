@@ -8,23 +8,58 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 )
 
 // Client is a Go client for the WSD daemon API.
 type Client struct {
-	baseURL    string
-	authToken  string
+	baseURL   string
+	authToken string
+
+	mu              sync.RWMutex
+	workspaceTokens map[string]string
+
 	httpClient *http.Client
 }
 
-// NewClient creates a new WSD client.
+// NewClient creates a new WSD client. authToken is the admin/control-plane
+// token; workspace tokens are learned from Prepare responses or bound with
+// SetWorkspaceToken.
 func NewClient(baseURL, authToken string) *Client {
 	return &Client{
-		baseURL:    baseURL,
-		authToken:  authToken,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		baseURL:         baseURL,
+		authToken:       authToken,
+		workspaceTokens: make(map[string]string),
+		httpClient:      &http.Client{Timeout: 60 * time.Second},
 	}
+}
+
+// SetWorkspaceToken binds token to workspaceID. Subsequent workspace-scoped
+// calls for that workspace use the workspace token instead of the admin token.
+// An empty token clears the binding.
+func (c *Client) SetWorkspaceToken(workspaceID, token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if token == "" {
+		delete(c.workspaceTokens, workspaceID)
+		return
+	}
+	c.workspaceTokens[workspaceID] = token
+}
+
+// WorkspaceToken returns the bound token for workspaceID, if any.
+func (c *Client) WorkspaceToken(workspaceID string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.workspaceTokens[workspaceID]
+}
+
+func (c *Client) tokenForWorkspace(workspaceID string) string {
+	if token := c.WorkspaceToken(workspaceID); token != "" {
+		return token
+	}
+	return c.authToken
 }
 
 // PrepareRequest is the request body for Prepare().
@@ -44,13 +79,14 @@ type PrepareRequest struct {
 // with empty workspace fields. Poll the job with GetJob; on success its
 // Workspace field carries the finished workspace.
 type PrepareResponse struct {
-	WorkspaceID string              `json:"workspace_id"`
-	OS          string              `json:"os,omitempty"`
-	WorkDir     string              `json:"work_dir,omitempty"`
-	Profile     *EnvironmentProfile `json:"profile,omitempty"`
-	CacheHit    bool                `json:"cache_hit"`
-	JobID       string              `json:"job_id,omitempty"`
-	Status      string              `json:"status,omitempty"`
+	WorkspaceID    string              `json:"workspace_id"`
+	WorkspaceToken string              `json:"workspace_token,omitempty"`
+	OS             string              `json:"os,omitempty"`
+	WorkDir        string              `json:"work_dir,omitempty"`
+	Profile        *EnvironmentProfile `json:"profile,omitempty"`
+	CacheHit       bool                `json:"cache_hit"`
+	JobID          string              `json:"job_id,omitempty"`
+	Status         string              `json:"status,omitempty"`
 }
 
 // EnvironmentProfile describes the detected environment.
@@ -79,6 +115,10 @@ func (c *Client) Prepare(ctx context.Context, req PrepareRequest) (*PrepareRespo
 	var result PrepareResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
+	}
+
+	if result.WorkspaceToken != "" {
+		c.SetWorkspaceToken(result.WorkspaceID, result.WorkspaceToken)
 	}
 
 	return &result, nil
@@ -116,7 +156,7 @@ func (c *Client) Exec(ctx context.Context, workspaceID string, req ExecRequest) 
 	}
 
 	path := fmt.Sprintf("/workspaces/%s/exec", workspaceID)
-	resp, err := c.doRequest(ctx, "POST", path, bytes.NewReader(body))
+	resp, err := c.doWorkspaceRequest(ctx, "POST", workspaceID, path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +189,7 @@ func (c *Client) Artifacts(ctx context.Context, workspaceID string, paths []stri
 		// Add query params if paths specified
 	}
 
-	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/workspaces/%s/artifacts", workspaceID), nil)
+	resp, err := c.doWorkspaceRequest(ctx, "GET", workspaceID, fmt.Sprintf("/workspaces/%s/artifacts", workspaceID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +237,7 @@ func (c *Client) CommitAndPR(ctx context.Context, workspaceID string, req Commit
 	}
 
 	path := fmt.Sprintf("/workspaces/%s/commit-and-pr", workspaceID)
-	resp, err := c.doRequest(ctx, "POST", path, bytes.NewReader(body))
+	resp, err := c.doWorkspaceRequest(ctx, "POST", workspaceID, path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +253,7 @@ func (c *Client) CommitAndPR(ctx context.Context, workspaceID string, req Commit
 
 // Destroy tears down a workspace.
 func (c *Client) Destroy(ctx context.Context, workspaceID string) error {
-	resp, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/workspaces/%s", workspaceID), nil)
+	resp, err := c.doWorkspaceRequest(ctx, "DELETE", workspaceID, fmt.Sprintf("/workspaces/%s", workspaceID), nil)
 	if err != nil {
 		return err
 	}
@@ -223,7 +263,7 @@ func (c *Client) Destroy(ctx context.Context, workspaceID string) error {
 
 // Status checks the status of a workspace.
 func (c *Client) Status(ctx context.Context, workspaceID string) (map[string]interface{}, error) {
-	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/workspaces/%s/status", workspaceID), nil)
+	resp, err := c.doWorkspaceRequest(ctx, "GET", workspaceID, fmt.Sprintf("/workspaces/%s/status", workspaceID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +317,7 @@ func (c *Client) StartJob(ctx context.Context, workspaceID string, req JobReques
 		return nil, err
 	}
 	path := fmt.Sprintf("/workspaces/%s/jobs", workspaceID)
-	resp, err := c.doRequest(ctx, "POST", path, bytes.NewReader(body))
+	resp, err := c.doWorkspaceRequest(ctx, "POST", workspaceID, path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +333,7 @@ func (c *Client) StartJob(ctx context.Context, workspaceID string, req JobReques
 // ListJobs returns the workspace's tracked background jobs.
 func (c *Client) ListJobs(ctx context.Context, workspaceID string) (*JobListResponse, error) {
 	path := fmt.Sprintf("/workspaces/%s/jobs", workspaceID)
-	resp, err := c.doRequest(ctx, "GET", path, nil)
+	resp, err := c.doWorkspaceRequest(ctx, "GET", workspaceID, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +354,7 @@ func (c *Client) GetJob(ctx context.Context, workspaceID, jobID, cursor string) 
 	if cursor != "" {
 		path += "?cursor=" + url.QueryEscape(cursor)
 	}
-	resp, err := c.doRequest(ctx, "GET", path, nil)
+	resp, err := c.doWorkspaceRequest(ctx, "GET", workspaceID, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -324,6 +364,9 @@ func (c *Client) GetJob(ctx context.Context, workspaceID, jobID, cursor string) 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
+	if result.Workspace != nil && result.Workspace.WorkspaceToken != "" {
+		c.SetWorkspaceToken(result.Workspace.WorkspaceID, result.Workspace.WorkspaceToken)
+	}
 	return &result, nil
 }
 
@@ -331,7 +374,7 @@ func (c *Client) GetJob(ctx context.Context, workspaceID, jobID, cursor string) 
 // and its output remain queryable with GetJob.
 func (c *Client) CancelJob(ctx context.Context, workspaceID, jobID string) error {
 	path := fmt.Sprintf("/workspaces/%s/jobs/%s", workspaceID, jobID)
-	resp, err := c.doRequest(ctx, "DELETE", path, nil)
+	resp, err := c.doWorkspaceRequest(ctx, "DELETE", workspaceID, path, nil)
 	if err != nil {
 		return err
 	}
@@ -373,17 +416,97 @@ func (c *Client) Leftovers(ctx context.Context) (*LeftoversResponse, error) {
 	return &result, nil
 }
 
+// doRequest issues a control-plane request with the admin token.
 func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestWithToken(ctx, method, path, body, c.authToken)
+}
+
+// doWorkspaceRequest issues a workspace-scoped request with the workspace's
+// bound token, falling back to the admin token when no token has been bound
+// (which the daemon accepts only in scoped mode).
+func (c *Client) doWorkspaceRequest(ctx context.Context, method, workspaceID, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestWithToken(ctx, method, path, body, c.tokenForWorkspace(workspaceID))
+}
+
+func (c *Client) doRequestWithToken(ctx context.Context, method, path string, body io.Reader, token string) (*http.Response, error) {
 	url := c.baseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.authToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
 	return c.httpClient.Do(req)
+}
+
+// WorkspaceClient is a Client bound to one workspace. Its methods deliberately
+// take no workspace ID, so an agent-facing tool cannot be talked into
+// targeting a different workspace.
+type WorkspaceClient struct {
+	client      *Client
+	workspaceID string
+}
+
+// ForWorkspace returns a client bound to workspaceID. Bind its token with
+// SetToken (or use the Client that created the workspace, which learns the
+// token from Prepare automatically).
+func (c *Client) ForWorkspace(workspaceID string) *WorkspaceClient {
+	return &WorkspaceClient{client: c, workspaceID: workspaceID}
+}
+
+// WorkspaceID returns the bound workspace ID.
+func (w *WorkspaceClient) WorkspaceID() string { return w.workspaceID }
+
+// SetToken binds this workspace's token on the underlying client.
+func (w *WorkspaceClient) SetToken(token string) {
+	w.client.SetWorkspaceToken(w.workspaceID, token)
+}
+
+// Exec runs a command in the bound workspace.
+func (w *WorkspaceClient) Exec(ctx context.Context, req ExecRequest) (*ExecResponse, error) {
+	return w.client.Exec(ctx, w.workspaceID, req)
+}
+
+// Artifacts retrieves artifacts from the bound workspace.
+func (w *WorkspaceClient) Artifacts(ctx context.Context, paths []string) (*ArtifactsResponse, error) {
+	return w.client.Artifacts(ctx, w.workspaceID, paths)
+}
+
+// CommitAndPR commits and opens a PR for the bound workspace.
+func (w *WorkspaceClient) CommitAndPR(ctx context.Context, req CommitAndPRRequest) (*CommitAndPRResponse, error) {
+	return w.client.CommitAndPR(ctx, w.workspaceID, req)
+}
+
+// Destroy tears down the bound workspace.
+func (w *WorkspaceClient) Destroy(ctx context.Context) error {
+	return w.client.Destroy(ctx, w.workspaceID)
+}
+
+// Status checks the bound workspace's status.
+func (w *WorkspaceClient) Status(ctx context.Context) (map[string]interface{}, error) {
+	return w.client.Status(ctx, w.workspaceID)
+}
+
+// StartJob launches a background job in the bound workspace.
+func (w *WorkspaceClient) StartJob(ctx context.Context, req JobRequest) (*JobResponse, error) {
+	return w.client.StartJob(ctx, w.workspaceID, req)
+}
+
+// ListJobs lists the bound workspace's background jobs.
+func (w *WorkspaceClient) ListJobs(ctx context.Context) (*JobListResponse, error) {
+	return w.client.ListJobs(ctx, w.workspaceID)
+}
+
+// GetJob returns a job's status and output.
+func (w *WorkspaceClient) GetJob(ctx context.Context, jobID, cursor string) (*JobResponse, error) {
+	return w.client.GetJob(ctx, w.workspaceID, jobID, cursor)
+}
+
+// CancelJob terminates a background job in the bound workspace.
+func (w *WorkspaceClient) CancelJob(ctx context.Context, jobID string) error {
+	return w.client.CancelJob(ctx, w.workspaceID, jobID)
 }

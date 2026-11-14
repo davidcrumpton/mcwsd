@@ -20,6 +20,7 @@ The daemon is configured primarily via command-line flags passed to `mcwsd daemo
 
 - Provisioner settings: runtime selection and platform-specific tuning
 - Backend settings: network binding, workspace state, cache, pruning, and capacity limits
+- Authentication settings: workspace authorization mode and token handling
 - Forge / git auth settings: commit-and-pr support and push authentication
 - Operational settings: debug logging and audit logging
 
@@ -30,6 +31,7 @@ The flags are evaluated at daemon startup. Secret values are intentionally read 
 ```sh
 mcwsd daemon \
   --plugin plugins/freebsd-jail.js \
+  --workspace-auth-mode scoped \
   --bind-address 0.0.0.0 \
   --port 8080 \
   --workspace-base-path /var/wsd/workspaces \
@@ -40,7 +42,7 @@ mcwsd daemon \
 A minimal server can also be started with defaults plus a plugin:
 
 ```sh
-mcwsd daemon --plugin plugins/docker.js
+mcwsd daemon --workspace-auth-mode scoped --plugin plugins/docker.js
 ```
 
 ## Global and operational flags
@@ -64,6 +66,17 @@ These flags apply to the process at large.
 - Type: string
 - Default: `~/audit.jsonl`
 - Output path for the audit log when audit logging is enabled.
+
+### `--workspace-auth-mode`
+
+- Type: string
+- Required: yes (flag or `MCWSD_WORKSPACE_AUTH_MODE`)
+- Values: `scoped` or `strict`
+- Controls per-workspace authorization:
+  - `scoped`: `/workspaces/{id}/...` requires the matching workspace token, but the admin token is also accepted as a control-plane break-glass credential.
+  - `strict`: `/workspaces/{id}/...` requires the matching workspace token; the admin token is limited to `POST /workspaces`, `/admin/*`, and `POST /workspaces/{id}/token`.
+- The daemon refuses to start if this is unset, so an operator cannot accidentally run with the old shared-token-only behavior.
+- Workspace tokens are returned as `workspace_token` when a workspace is created. The admin token (`MCWSD_TOKEN`) is also used as the HMAC key for workspace tokens, so keep it stable and secret; rotating it invalidates existing workspace tokens.
 
 ## Provisioner flags
 
@@ -572,6 +585,7 @@ export MCWSD_FORGEJO_PROJECT_PATH=team/workspace
 mcwsd daemon \
   --plugin plugins/freebsd-jail.js \
   --bind-address 0.0.0.0 \
+  --workspace-auth-mode=strict \
   --port 8080 \
   --workspace-base-path /srv/wsd/workspaces \
   --cache-dir /srv/wsd/cache \

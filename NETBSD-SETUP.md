@@ -165,6 +165,7 @@ export PATH="/usr/pkg/bin:/usr/pkg/sbin:$PATH"
 
 mcwsd daemon \
   --plugin plugins/netbsd-account.js \
+  --workspace-auth-mode=strict \
   --port 9080 \
   --bind-address=0.0.0.0 \
   --state-file ~/wsd/netbsd/state.json \

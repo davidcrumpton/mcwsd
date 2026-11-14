@@ -26,8 +26,8 @@ This keeps the plugin's allowed-binary list and privilege boundary tied to one
 account, so a root-capable plugin stays reviewable as one unit.
 
 ```bash
-mcwsd daemon --plugin plugins/podman.js --port 9080 --state-file ~/wsd/podman/state.json
-mcwsd daemon --plugin plugins/docker.js --port 9081 --state-file ~/wsd/docker/state.json
+mcwsd daemon --plugin plugins/podman.js --port 9080 --state-file ~/wsd/podman/state.json --workspace-auth-mode=scoped
+mcwsd daemon --plugin plugins/docker.js --port 9081 --state-file ~/wsd/docker/state.json --workspace-auth-mode=scoped
 ```
 
 ## Anatomy of a plugin

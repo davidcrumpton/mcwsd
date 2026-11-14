@@ -15,51 +15,59 @@ import (
 
 // Server holds the HTTP server state.
 type Server struct {
-	backend   internal.WorkspaceBackend
-	authToken string
-	mux       *http.ServeMux
+	backend           internal.WorkspaceBackend
+	tokens            *tokenAuthority
+	workspaceAuthMode WorkspaceAuthMode
+	mux               *http.ServeMux
 }
 
-// NewServer creates a new API server.
-func NewServer(backend internal.WorkspaceBackend, authToken string) *Server {
+// NewServer creates a new API server. workspaceAuthMode must be a valid mode
+// from ParseWorkspaceAuthMode; an unknown mode fails closed (strict).
+func NewServer(backend internal.WorkspaceBackend, authToken string, workspaceAuthMode WorkspaceAuthMode) *Server {
 	s := &Server{
-		backend:   backend,
-		authToken: authToken,
-		mux:       http.NewServeMux(),
+		backend:           backend,
+		tokens:            newTokenAuthority(authToken),
+		workspaceAuthMode: workspaceAuthMode,
+		mux:               http.NewServeMux(),
 	}
 	s.registerRoutes()
 	return s
 }
 
 func (s *Server) registerRoutes() {
-	s.mux.HandleFunc("POST /workspaces", s.handlePrepare)
-	s.mux.HandleFunc("POST /workspaces/{id}/exec", s.handleExec)
-	s.mux.HandleFunc("GET /workspaces/{id}/artifacts", s.handleArtifacts)
-	s.mux.HandleFunc("POST /workspaces/{id}/commit-and-pr", s.handleCommitAndPR)
-	s.mux.HandleFunc("POST /workspaces/{id}/safe-edit", s.handleSafeEdit)
-	s.mux.HandleFunc("DELETE /workspaces/{id}", s.handleDestroy)
-	s.mux.HandleFunc("GET /workspaces/{id}/status", s.handleStatus)
-	s.mux.HandleFunc("GET /admin/leftovers", s.handleLeftovers)
+	// Control-plane routes require the admin token.
+	s.mux.HandleFunc("POST /workspaces", s.withAdminAuth(s.handlePrepare))
+	s.mux.HandleFunc("POST /workspaces/{id}/token", s.withAdminAuth(s.handleWorkspaceToken))
+	s.mux.HandleFunc("GET /admin/leftovers", s.withAdminAuth(s.handleLeftovers))
+
+	// Workspace-scoped routes require the matching workspace token (or, in
+	// scoped mode, the admin token as break-glass).
+	s.mux.HandleFunc("POST /workspaces/{id}/exec", s.withWorkspaceAuth(s.handleExec))
+	s.mux.HandleFunc("GET /workspaces/{id}/artifacts", s.withWorkspaceAuth(s.handleArtifacts))
+	s.mux.HandleFunc("POST /workspaces/{id}/commit-and-pr", s.withWorkspaceAuth(s.handleCommitAndPR))
+	s.mux.HandleFunc("POST /workspaces/{id}/safe-edit", s.withWorkspaceAuth(s.handleSafeEdit))
+	s.mux.HandleFunc("DELETE /workspaces/{id}", s.withWorkspaceAuth(s.handleDestroy))
+	s.mux.HandleFunc("GET /workspaces/{id}/status", s.withWorkspaceAuth(s.handleStatus))
 
 	// File system tools
-	s.mux.HandleFunc("GET /workspaces/{id}/files", s.handleListFiles)
-	s.mux.HandleFunc("GET /workspaces/{id}/file", s.handleReadFile)
-	s.mux.HandleFunc("PUT /workspaces/{id}/file", s.handleWriteFile)
+	s.mux.HandleFunc("GET /workspaces/{id}/files", s.withWorkspaceAuth(s.handleListFiles))
+	s.mux.HandleFunc("GET /workspaces/{id}/file", s.withWorkspaceAuth(s.handleReadFile))
+	s.mux.HandleFunc("PUT /workspaces/{id}/file", s.withWorkspaceAuth(s.handleWriteFile))
 
 	// Background jobs. /jobs is the canonical, AI-facing surface (the ID is
 	// returned as job_id); /processes is the original alias and keeps working
 	// unchanged. Both route sets share the same handlers.
-	s.mux.HandleFunc("POST /workspaces/{id}/jobs", s.handleStartProcess)
-	s.mux.HandleFunc("GET /workspaces/{id}/jobs", s.handleListProcesses)
-	s.mux.HandleFunc("GET /workspaces/{id}/jobs/{jid}", s.handleGetProcessStatus)
-	s.mux.HandleFunc("POST /workspaces/{id}/jobs/{jid}/input", s.handleSendProcessInput)
-	s.mux.HandleFunc("DELETE /workspaces/{id}/jobs/{jid}", s.handleKillProcess)
+	s.mux.HandleFunc("POST /workspaces/{id}/jobs", s.withWorkspaceAuth(s.handleStartProcess))
+	s.mux.HandleFunc("GET /workspaces/{id}/jobs", s.withWorkspaceAuth(s.handleListProcesses))
+	s.mux.HandleFunc("GET /workspaces/{id}/jobs/{jid}", s.withWorkspaceAuth(s.handleGetProcessStatus))
+	s.mux.HandleFunc("POST /workspaces/{id}/jobs/{jid}/input", s.withWorkspaceAuth(s.handleSendProcessInput))
+	s.mux.HandleFunc("DELETE /workspaces/{id}/jobs/{jid}", s.withWorkspaceAuth(s.handleKillProcess))
 
-	s.mux.HandleFunc("POST /workspaces/{id}/processes", s.handleStartProcess)
-	s.mux.HandleFunc("GET /workspaces/{id}/processes", s.handleListProcesses)
-	s.mux.HandleFunc("GET /workspaces/{id}/processes/{pid}", s.handleGetProcessStatus)
-	s.mux.HandleFunc("POST /workspaces/{id}/processes/{pid}/input", s.handleSendProcessInput)
-	s.mux.HandleFunc("DELETE /workspaces/{id}/processes/{pid}", s.handleKillProcess)
+	s.mux.HandleFunc("POST /workspaces/{id}/processes", s.withWorkspaceAuth(s.handleStartProcess))
+	s.mux.HandleFunc("GET /workspaces/{id}/processes", s.withWorkspaceAuth(s.handleListProcesses))
+	s.mux.HandleFunc("GET /workspaces/{id}/processes/{pid}", s.withWorkspaceAuth(s.handleGetProcessStatus))
+	s.mux.HandleFunc("POST /workspaces/{id}/processes/{pid}/input", s.withWorkspaceAuth(s.handleSendProcessInput))
+	s.mux.HandleFunc("DELETE /workspaces/{id}/processes/{pid}", s.withWorkspaceAuth(s.handleKillProcess))
 }
 
 // processIDFromPath returns the job/process identifier from either the
@@ -108,7 +116,7 @@ func requestCaller(r *http.Request) string {
 		return v
 	}
 	if r.Header.Get("Authorization") != "" {
-		return "shared_bearer_token"
+		return "bearer_token"
 	}
 	return "anonymous"
 }
@@ -161,16 +169,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"duration_ms", time.Since(started).Milliseconds())
 	}()
 
-	// Auth middleware
-	if r.Header.Get("Authorization") != "Bearer "+s.authToken {
-		http.Error(recorder, "unauthorized", http.StatusUnauthorized)
-		internal.Log.Error("unauthorized_access",
-			"remote_addr", r.RemoteAddr,
-			"workspace_id", requestWorkspaceID(r),
-			"authenticated_caller", requestCaller(r),
-			"correlation_id", correlationID)
-		return
-	}
+	// Authentication and workspace authorization live in the per-route
+	// wrappers (withAdminAuth / withWorkspaceAuth), because only they know
+	// the route's workspace ID after the mux has matched it.
 	s.mux.ServeHTTP(recorder, r)
 }
 
@@ -237,13 +238,17 @@ type PrepareRequest struct {
 // workspace details are returned inline, or — when provisioning was
 // backgrounded — a workspace_id/job_id/status the caller polls via the job API.
 type PrepareResponse struct {
-	WorkspaceID string                       `json:"workspace_id"`
-	OS          string                       `json:"os,omitempty"`
-	WorkDir     string                       `json:"work_dir,omitempty"`
-	Profile     *internal.EnvironmentProfile `json:"profile,omitempty"`
-	CacheHit    bool                         `json:"cache_hit"`
-	JobID       string                       `json:"job_id,omitempty"`
-	Status      string                       `json:"status,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
+	// WorkspaceToken authorizes only this workspace. It is the credential an
+	// agent should receive; the daemon's admin token must stay in the
+	// control plane.
+	WorkspaceToken string                       `json:"workspace_token,omitempty"`
+	OS             string                       `json:"os,omitempty"`
+	WorkDir        string                       `json:"work_dir,omitempty"`
+	Profile        *internal.EnvironmentProfile `json:"profile,omitempty"`
+	CacheHit       bool                         `json:"cache_hit"`
+	JobID          string                       `json:"job_id,omitempty"`
+	Status         string                       `json:"status,omitempty"`
 }
 
 func (s *Server) handlePrepare(w http.ResponseWriter, r *http.Request) {
@@ -279,24 +284,55 @@ func (s *Server) handlePrepare(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(PrepareResponse{
-			WorkspaceID: result.WorkspaceID,
-			JobID:       result.JobID,
-			Status:      string(result.Status),
+			WorkspaceID:    result.WorkspaceID,
+			WorkspaceToken: s.workspaceToken(result.WorkspaceID),
+			JobID:          result.JobID,
+			Status:         string(result.Status),
 		})
 		return
 	}
 
 	ws := result.Workspace
 	resp := PrepareResponse{
-		WorkspaceID: ws.ID,
-		OS:          ws.OS,
-		WorkDir:     ws.WorkDir,
-		Profile:     ws.Profile,
-		CacheHit:    ws.CacheHit,
+		WorkspaceID:    ws.ID,
+		WorkspaceToken: s.workspaceToken(ws.ID),
+		OS:             ws.OS,
+		WorkDir:        ws.WorkDir,
+		Profile:        ws.Profile,
+		CacheHit:       ws.CacheHit,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// WorkspaceTokenResponse is the response for POST /workspaces/{id}/token.
+type WorkspaceTokenResponse struct {
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceToken string `json:"workspace_token"`
+}
+
+// handleWorkspaceToken is an admin-only re-issue endpoint. It lets operators
+// recover access to a recovered leftover or rotate a client's credential
+// without destroying the workspace.
+func (s *Server) handleWorkspaceToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "workspace id is required", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(WorkspaceTokenResponse{
+		WorkspaceID:    id,
+		WorkspaceToken: s.workspaceToken(id),
+	})
+}
+
+func (s *Server) workspaceToken(workspaceID string) string {
+	if s.tokens == nil {
+		return ""
+	}
+	return s.tokens.workspaceToken(workspaceID)
 }
 
 // ExecRequest is the body for POST /workspaces/{id}/exec.
@@ -807,23 +843,24 @@ func (s *Server) handleGetProcessStatus(w http.ResponseWriter, r *http.Request) 
 		Stderr:    result.Stderr,
 		Output:    result.Output,
 		Cursor:    result.Cursor,
-		Workspace: prepareResponseFromWorkspace(result.Workspace),
+		Workspace: s.prepareResponseFromWorkspace(result.Workspace),
 	})
 }
 
 // prepareResponseFromWorkspace renders a finished workspace in the same shape
 // POST /workspaces returns, so a client polling a provisioning job receives
 // identical details to an inline provision.
-func prepareResponseFromWorkspace(ws *internal.Workspace) *PrepareResponse {
+func (s *Server) prepareResponseFromWorkspace(ws *internal.Workspace) *PrepareResponse {
 	if ws == nil {
 		return nil
 	}
 	return &PrepareResponse{
-		WorkspaceID: ws.ID,
-		OS:          ws.OS,
-		WorkDir:     ws.WorkDir,
-		Profile:     ws.Profile,
-		CacheHit:    ws.CacheHit,
+		WorkspaceID:    ws.ID,
+		WorkspaceToken: s.workspaceToken(ws.ID),
+		OS:             ws.OS,
+		WorkDir:        ws.WorkDir,
+		Profile:        ws.Profile,
+		CacheHit:       ws.CacheHit,
 	}
 }
 

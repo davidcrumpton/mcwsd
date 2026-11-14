@@ -35,7 +35,7 @@ Substitute podman for docker below if you use docker.  This will create the file
 You must note the generated token and have your API client configured to use it or use the export command `export MCWSD_TOKEN="wsd-<token>"` to set it before you run the daemon:
 
 ```bash
-mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --debug
+mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --workspace-auth-mode=scoped --debug
 # We set the token in the environment variable to avoid having to pass it to the daemon, this is useful if you are running the bind address in case your agent is in docker and can't reach mcwsd via localhost.
 
 # Running the daemon locally allows you to enter the container and see what the AI is doing.  Nothing prohibits you from execing docker exec -it <container-id> to see what is happening inside the container.  The same is true for all other runtimes.
@@ -61,7 +61,7 @@ Before running the daemon, ensure you have:
 ### Running the Daemon
 
 ```bash
-go run cmd/mcwsd/main.go daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0
+go run cmd/mcwsd/main.go daemon --plugin plugins/podman.js --workspace-auth-mode=scoped --port 9080 --bind-address=0.0.0.0
 ```
 
 ### Compiling the Daemon
@@ -70,11 +70,12 @@ go run cmd/mcwsd/main.go daemon --plugin plugins/podman.js --port 9080 --bind-ad
 go build -o mcwsd cmd/mcwsd/main.go
 ```
 
-**Configuration flags** (all optional, with defaults shown):
+**Configuration flags** (defaults shown; `--workspace-auth-mode` is required):
 
 | Flag | Default | Description |
 | ------ | --------- | ------------- |
 | `--port` | `8080` | HTTP port to listen on |
+| `--workspace-auth-mode` | none (required) | `scoped` or `strict`; controls per-workspace token enforcement |
 | `--cache-dir` | `~/wsd/cache` | Dependency cache directory |
 | `--max-cache-gb` | `20` | Maximum cache size in GB |
 | `--state-file` | `<plugin>.state.json` under the wsd dir | Workspace tracking file path |
@@ -95,6 +96,7 @@ For supported platforms, configure resource limits to prevent the daemon from pr
 
 ```bash
 mcwsd daemon \\
+  --workspace-auth-mode=scoped \\
   --capacity-memory-percent 90 \\
   --capacity-swap-percent 50 \\
   --capacity-cpu-percent 95 \\
@@ -121,16 +123,24 @@ mcwsd cleanup --workspace-ttl 0s --prune
 
 #### Authentication
 
-The daemon uses Bearer token authentication:
+The daemon uses Bearer token authentication with two credential classes:
 
-1. **Set via environment variable**:
+- **Admin token** (`MCWSD_TOKEN`): the control-plane credential. It can provision workspaces, enumerate leftovers, and mint workspace tokens. Do not give it to an agent or place it inside a workspace.
+- **Workspace token**: a per-workspace capability returned as `workspace_token` by `POST /workspaces`. It authorizes only that workspace's routes, so an agent holding workspace A's token cannot exec in or destroy workspace B even if it learns B's ID.
+
+`--workspace-auth-mode` is **required** (or set `MCWSD_WORKSPACE_AUTH_MODE`). It has two values:
+
+- `scoped`: workspace tokens are required for workspace routes, and the admin token is also accepted as a control-plane break-glass credential. Use this when migrating existing clients.
+- `strict`: workspace routes accept only the matching workspace token. The admin token is limited to provisioning, `/admin/*`, and `POST /workspaces/{id}/token`. Use this for cross-workspace isolation.
+
+1. **Set the admin token via environment variable**:
 
 ```bash
   export MCWSD_TOKEN="your-secure-token"
-  mcwsd daemon
+  mcwsd daemon --workspace-auth-mode=strict
 ```
 
-2. **Daemon generates random token** (if `MCWSD_TOKEN` not set):
+2. **Daemon generates a random admin token** (if `MCWSD_TOKEN` not set and the listener is loopback):
 
 ```text
    2026/07/04 15:54:28 WARN MCWSD_TOKEN not set, generating random token
@@ -139,23 +149,25 @@ The daemon uses Bearer token authentication:
 
    *Note: The token is logged once at startup. Keep this value or export it with `export MCWSD_TOKEN="<token>"` before running the daemon.*
 
+The value of `MCWSD_TOKEN` is also the key used to derive workspace tokens. Keep it stable across restarts if clients should retain their workspace tokens; rotating it invalidates all existing workspace tokens (clients can re-fetch them with the admin-only `POST /workspaces/{id}/token` endpoint).
+
 #### Audit Logging
 
 Enable a separate structured audit trail with:
 
 ```bash
-mcwsd daemon --audit
+mcwsd daemon --workspace-auth-mode=strict --audit
 ```
 
 By default, this writes JSONL records to `~/audit.jsonl` in the daemon user's home directory. Override the destination with `--audit-file`:
 
 ```bash
-mcwsd daemon --audit --audit-file /var/lib/wsd/audit.jsonl
+mcwsd daemon --workspace-auth-mode=strict --audit --audit-file /var/lib/wsd/audit.jsonl
 ```
 
 The audit facility writes one JSON object per line containing the request lifecycle, outcome, workspace identifier, authenticated caller, and correlation ID. Secret-bearing keys such as `Authorization`, `token`, `password`, and `api_key` are redacted before writing. Audit logs are intended for daemon-level operator evidence and are not a guarantee of complete in-sandbox visibility.
 
-The daemon still cannot prove exactly what every command inside a workspace did, and the shared bearer token does not identify a specific user or AI client. For that reason, audit records should be treated as durable operational evidence for API requests only, not as a definitive record of everything executed by code running in the sandbox.
+The daemon still cannot prove exactly what every command inside a workspace did. A workspace token identifies the workspace it is authorized for, not a specific user or AI client inside it. For that reason, audit records should be treated as durable operational evidence for API requests only, not as a definitive record of everything executed by code running in the sandbox.
 
 #### Running in Docker Container
 
@@ -165,7 +177,7 @@ To run a local workspace and inspect it:
 
 ```bash
 # Run the daemon locally first (allows entry into workspaces)
-mcwsd daemon --debug
+mcwsd daemon --workspace-auth-mode=strict --debug
 
 # Enter any active workspace to see what's happening
 docker exec -it <container-id> bash

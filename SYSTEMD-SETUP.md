@@ -38,6 +38,7 @@ export MCWSD_GIT_SSH_KEY_PATH=/etc/wsd/wsd_rsa
 export MCWSD_GIT_SSH_KNOWN_HOSTS=/etc/wsd/known_hosts
 
 exec /usr/local/bin/mcwsd daemon \
+    --workspace-auth-mode=strict \
     --port 9080 \
     --bind-address=0.0.0.0 \
     --plugin /usr/local/lib/mcwsd/plugins/docker.js \

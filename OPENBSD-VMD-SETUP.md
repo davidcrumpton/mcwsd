@@ -318,6 +318,7 @@ You may with to `su -m _wsd -c sh` to switch to the `_wsd` user before running t
 
 ```sh
 su -m _wsd -c 'mcwsd daemon \
+  --workspace-auth-mode=scoped \
   --plugin plugins/openbsd-vmd.js \
   --openbsd-vm-root /var/wsd/vms/openbsd \
   --openbsd-master-image /var/wsd/vms/openbsd/wsd-master.qcow2 \

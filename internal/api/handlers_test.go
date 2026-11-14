@@ -60,7 +60,7 @@ func TestServeHTTPDebugLogsSafeRequestDetails(t *testing.T) {
 		reader.Close()
 	}()
 
-	server := NewServer(nil, "test-token")
+	server := NewServer(nil, "test-token", WorkspaceAuthScoped)
 	request := httptest.NewRequest(http.MethodGet, "/unknown?token=query-secret", nil)
 	request.Header.Set("Authorization", "Bearer test-token")
 	response := httptest.NewRecorder()
@@ -93,7 +93,7 @@ func TestServeHTTPAuditLogsStructuredRequestData(t *testing.T) {
 	internal.Log.SetAudit(true, auditPath)
 	defer internal.Log.SetAudit(previousAudit, auditPath)
 
-	server := NewServer(nil, "test-token")
+	server := NewServer(nil, "test-token", WorkspaceAuthScoped)
 	request := httptest.NewRequest(http.MethodGet, "/workspaces/ws-123/files?path=/tmp", nil)
 	request.Header.Set("Authorization", "Bearer wrong-token")
 	response := httptest.NewRecorder()

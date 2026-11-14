@@ -19,7 +19,7 @@ class Tools:
         )
         token: str = Field(
             default="",
-            description="Bearer token printed by mcwsd on startup (MCWSD_TOKEN or the auto-generated one).",
+            description="Admin/control-plane bearer token (MCWSD_TOKEN). Workspace tokens are learned automatically from prepare_workspace responses.",
         )
         timeout_seconds: int = Field(
             default=180,
@@ -32,12 +32,26 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
+        self._workspace_tokens = {}
 
     def _headers(self):
         return {
             "Authorization": f"Bearer {self.valves.token}",
             "Content-Type": "application/json",
         }
+
+    def _workspace_headers(self, workspace_id: str):
+        token = self._workspace_tokens.get(workspace_id) or self.valves.token
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    def _bind_workspace_token(self, workspace_id, token) -> None:
+        workspace_id = (workspace_id or "").strip()
+        token = (token or "").strip()
+        if workspace_id and token:
+            self._workspace_tokens[workspace_id] = token
 
     def _url(self, path: str) -> str:
         return f"{self.valves.base_url.rstrip('/')}{path}"
@@ -109,9 +123,11 @@ class Tools:
             (0 uses the daemon default; ignored when run_async=True).
         :param run_async: Start as a background job and poll until it finishes
             (default True). Set False to block on the initial request.
-        :return: JSON string with workspace_id, os, work_dir, detected
-            environment profile (including system_package_manager and
-            system_install_command), and cache_hit. `work_dir` is the absolute
+        :return: JSON string with workspace_id, workspace_token, os, work_dir,
+            detected environment profile (including system_package_manager and
+            system_install_command), and cache_hit. The tool stores
+            workspace_token internally and uses it for subsequent
+            workspace-scoped calls. `work_dir` is the absolute
             path of the repo inside the workspace (currently "/workspace/repo");
             treat it as the base for every file path. Prefer paths relative to
             it (e.g. "main.c"), which are resolved against work_dir.
@@ -135,6 +151,7 @@ class Tools:
             )
             resp.raise_for_status()
             data = resp.json()
+            self._bind_workspace_token(data.get("workspace_id"), data.get("workspace_token"))
 
             job_id = data.get("job_id")
             if not job_id:
@@ -153,7 +170,7 @@ class Tools:
             params = {"cursor": cursor} if cursor else None
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/jobs/{job_id}"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 params=params,
                 timeout=self.valves.timeout_seconds,
             )
@@ -163,7 +180,11 @@ class Tools:
             status = data.get("status")
             if status in ("succeeded", "failed", "cancelled", "timed_out"):
                 if status == "succeeded" and data.get("workspace"):
-                    return json.dumps(data["workspace"])
+                    workspace = data["workspace"]
+                    self._bind_workspace_token(
+                        workspace.get("workspace_id"), workspace.get("workspace_token")
+                    )
+                    return json.dumps(workspace)
                 detail = data.get("output", "")
                 return f"Error preparing workspace: provisioning {status}. {detail}".strip()
             time.sleep(2)
@@ -227,7 +248,7 @@ class Tools:
                 payload["async"] = True
             resp = requests.post(
                 self._url(f"/workspaces/{workspace_id}/exec"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 json=payload,
                 timeout=effective_timeout + 30,
             )
@@ -249,7 +270,7 @@ class Tools:
             params = {"paths": paths} if paths else {}
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/artifacts"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 params=params,
                 timeout=self.valves.timeout_seconds,
             )
@@ -288,7 +309,7 @@ class Tools:
 
             resp = requests.post(
                 self._url(f"/workspaces/{workspace_id}/safe-edit"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 json=payload,
                 timeout=self.valves.timeout_seconds,
             )
@@ -340,7 +361,7 @@ class Tools:
 
             resp = requests.post(
                 self._url(f"/workspaces/{workspace_id}/commit-and-pr"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 json=payload,
                 timeout=self.valves.timeout_seconds,
             )
@@ -359,7 +380,7 @@ class Tools:
         try:
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/status"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 timeout=self.valves.timeout_seconds,
             )
             resp.raise_for_status()
@@ -377,7 +398,7 @@ class Tools:
         try:
             resp = requests.delete(
                 self._url(f"/workspaces/{workspace_id}"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 timeout=self.valves.timeout_seconds,
             )
             resp.raise_for_status()
@@ -407,7 +428,7 @@ class Tools:
         try:
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/files"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 params={"path": path},
                 timeout=self.valves.timeout_seconds,
             )
@@ -433,7 +454,7 @@ class Tools:
         try:
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/file"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 params={"path": path},
                 timeout=self.valves.timeout_seconds,
             )
@@ -461,7 +482,7 @@ class Tools:
         try:
             resp = requests.put(
                 self._url(f"/workspaces/{workspace_id}/file"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 json={"path": path, "content": content},
                 timeout=self.valves.timeout_seconds,
             )
@@ -501,7 +522,7 @@ class Tools:
         try:
             resp = requests.post(
                 self._url(f"/workspaces/{workspace_id}/jobs"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 json=payload,
                 timeout=self.valves.timeout_seconds,
             )
@@ -522,7 +543,7 @@ class Tools:
         try:
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/jobs"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 timeout=self.valves.timeout_seconds,
             )
             resp.raise_for_status()
@@ -545,7 +566,7 @@ class Tools:
         try:
             resp = requests.get(
                 self._url(f"/workspaces/{workspace_id}/jobs/{job_id}"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 params=params,
                 timeout=self.valves.timeout_seconds,
             )
@@ -566,7 +587,7 @@ class Tools:
         try:
             resp = requests.delete(
                 self._url(f"/workspaces/{workspace_id}/jobs/{job_id}"),
-                headers=self._headers(),
+                headers=self._workspace_headers(workspace_id),
                 timeout=self.valves.timeout_seconds,
             )
             resp.raise_for_status()

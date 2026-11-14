@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.4.570"
+	Version         = "0.5.000"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -151,6 +151,7 @@ func newDaemonCmd() *cobra.Command {
 	var (
 		provisioningHintsFile string
 		workspaceBasePath     string
+		workspaceAuthMode     string
 		bindAddress           string
 		port                  int
 		cacheDir              string
@@ -223,10 +224,11 @@ func newDaemonCmd() *cobra.Command {
 		Long: `Start the mcwsd HTTP daemon. The daemon provisions ephemeral workspaces on demand,
 serves the workspace API, and cleans up stale workspaces periodically.
 
-Flags are grouped into three concerns:
+Flags are grouped into four concerns:
 
 	Provisioner  -- which runtime plugin backs workspaces (--plugin)
   Backend      -- daemon lifecycle, networking, cache, capacity gating
+  Auth         -- per-workspace authorization (--workspace-auth-mode, required)
   Forge        -- git forge auth for commit_and_pr (optional; omit to disable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scriptPluginErr != nil {
@@ -267,6 +269,7 @@ Flags are grouped into three concerns:
 				},
 				execWaitSeconds,
 				provisionWaitSeconds, provisionTimeout,
+				workspaceAuthMode,
 			)
 		},
 	}
@@ -284,6 +287,9 @@ Flags are grouped into three concerns:
 		"Base directory for workspace repos on the host")
 	f.StringVar(&bindAddress, "bind-address", "127.0.0.1",
 		"IP address to bind the HTTP server to")
+	f.StringVar(&workspaceAuthMode, "workspace-auth-mode", os.Getenv("MCWSD_WORKSPACE_AUTH_MODE"),
+		`Workspace authorization mode (required): "scoped" (workspace token for its own workspace; admin token also accepted as break-glass) or "strict" (workspace token only on /workspaces/{id} routes)`)
+
 	f.IntVar(&port, "port", 8080,
 		"HTTP port to listen on")
 	f.StringVar(&cacheDir, "cache-dir", filepath.Join(baseDir, "cache"),
@@ -412,7 +418,12 @@ func runDaemon(
 	jobsFile string, jobLimits jobs.Limits,
 	execWaitSeconds int,
 	provisionWaitSeconds int, provisionTimeout time.Duration,
+	workspaceAuthMode string,
 ) error {
+	authMode, err := api.ParseWorkspaceAuthMode(workspaceAuthMode)
+	if err != nil {
+		return err
+	}
 	if pruneInterval <= 0 {
 		return fmt.Errorf("--prune-interval must be greater than 0")
 	}
@@ -682,7 +693,12 @@ func runDaemon(
 	}
 
 	// Create API server
-	server := api.NewServer(backend, authToken)
+	server := api.NewServer(backend, authToken, authMode)
+	if authMode == api.WorkspaceAuthScoped {
+		internal.Log.Warn("workspace_auth_mode_scoped",
+			"detail", "the admin token can access all workspaces; use --workspace-auth-mode=strict for cross-workspace isolation")
+	}
+	internal.Log.Info("workspace_auth_mode", "mode", string(authMode))
 
 	tlsEnabled := tlsCertFile != "" && tlsKeyFile != ""
 	httpServer := &http.Server{

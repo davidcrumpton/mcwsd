@@ -6,7 +6,7 @@ The following command will start the Workspace Daemon in Kubernetes mode, assumi
 
 ```sh
 # Will create all directories in home directory and the default namespace.  You must create the namespace first to use an alternate namespace.
-/usr/local/bin/mcwsd daemon --plugin plugins/kubernetes.js --bind-address=0.0.0.0 --port 9080 
+/usr/local/bin/mcwsd daemon --plugin plugins/kubernetes.js --bind-address=0.0.0.0 --port 9080 --workspace-auth-mode=scoped
 ```
 
 ## Podman Setup
@@ -14,7 +14,7 @@ The following command will start the Workspace Daemon in Kubernetes mode, assumi
 This command will start the Workspace Daemon in Podman mode creating directories as needed in home directory:
 
 ```sh
-/usr/local/bin/mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --debug
+/usr/local/bin/mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --debug --workspace-auth-mode=scoped
 ```
 
 ## Docker Setup
@@ -22,7 +22,7 @@ This command will start the Workspace Daemon in Podman mode creating directories
 This command will start the Workspace Daemon in Docker mode:
 
 ```sh
-/usr/local/bin/mcwsd daemon --plugin plugins/docker.js --port 9080 --bind-address=0.0.0.0 --debug
+/usr/local/bin/mcwsd daemon --plugin plugins/docker.js --port 9080 --bind-address=0.0.0.0 --debug --workspace-auth-mode=scoped
 ```
 
 Docker mode assume the user account is in the docker group.  None of the modes require any special permissions like doas/sudo.
@@ -34,7 +34,7 @@ container services are running and the `container` binary is on `PATH`:
 
 ```sh
 container system start
-/usr/local/bin/mcwsd daemon --plugin plugins/apple-container.js --port 9080 --bind-address=0.0.0.0 --debug
+/usr/local/bin/mcwsd daemon --plugin plugins/apple-container.js --port 9080 --bind-address=0.0.0.0 --debug --workspace-auth-mode=scoped
 ```
 
 Apple container fixes a container's network attachment when the container is
@@ -46,7 +46,7 @@ network-less workspaces, or to an Apple container network name created with
 `container network create`.
 
 ```sh
-mcwsd daemon --plugin plugins/apple-container.js --container-network none --port 9080
+mcwsd daemon --plugin plugins/apple-container.js --container-network none --port 9080 --workspace-auth-mode=scoped
 ```
 
 ## Notes

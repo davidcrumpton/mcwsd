@@ -44,6 +44,12 @@ def get_tools():
     return tools
 
 
+def bind_workspace_token(tools, workspace_id, token):
+    """Bind a workspace token for strict-mode daemons."""
+    if workspace_id and token:
+        tools._bind_workspace_token(workspace_id, token)
+
+
 def cmd_prepare(tools, repo_url, ref="main"):
     """Test prepare_workspace function."""
     print(f"Preparing workspace from {repo_url} (ref={ref})...")
@@ -355,6 +361,11 @@ Examples:
     # Global options
     # Provisioner is unused in the code base at this time.
     parser.add_argument("--provisioner", default="", help="Specify the provisioner used by the daemon (e.g., docker, podman, apple-containers, freebsd-jails)")
+    parser.add_argument(
+        "--workspace-token",
+        default=os.getenv("MCWSD_WORKSPACE_TOKEN", ""),
+        help="Workspace token for strict mode (or set MCWSD_WORKSPACE_TOKEN). Not needed for prepare/full-test, which learn it automatically.",
+    )
 
     # prepare command
     prep_parser = subparsers.add_parser("prepare", help="Create a new workspace")
@@ -444,6 +455,7 @@ Examples:
         sys.exit(1)
 
     tools = get_tools()
+    bind_workspace_token(tools, getattr(args, "workspace_id", ""), args.workspace_token)
 
     if args.command == "prepare":
         cmd_prepare(tools, args.repo_url, args.ref)

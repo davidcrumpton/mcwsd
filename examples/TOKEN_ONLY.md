@@ -7,7 +7,7 @@ All of my examples use the Forge with SSH keys which adds additional complexity 
 The daemon has fewer and simpler options when forging with just a token.  The `mcwsd` daemon below runs on FreeBSD and is connected to Forgejo.
 
 ```text
-/usr/local/bin/mcwsd daemon --port 9080 --workspace-base-path /home/wsd --cache-dir /home/wsd/cache --runtime jail --state-file /home/wsd/state.json --forge-type=forgejo --git-auth-mode=token --bind-address=0.0.0.0 --freebsd-network-mode=vnet --freebsd-interface=em0 --jobs-file=/home/wsd/jobs.json --exec-wait-seconds=300 --forgejo-api-base=http://docker-vm:3000 --forgejo-token-env-var=FORGEJO_TOKEN --audit
+/usr/local/bin/mcwsd daemon --port 9080 --workspace-base-path /home/wsd --cache-dir /home/wsd/cache --runtime jail --state-file /home/wsd/state.json --forge-type=forgejo --git-auth-mode=token --bind-address=0.0.0.0 --freebsd-network-mode=vnet --freebsd-interface=em0 --jobs-file=/home/wsd/jobs.json --exec-wait-seconds=300 --forgejo-api-base=http://docker-vm:3000 --forgejo-token-env-var=FORGEJO_TOKEN --audit --workspace-auth-mode=scoped
 ```
 
 ## Forge Credential

@@ -117,6 +117,7 @@ Static example:
 
 ```sh
 mcwsd daemon --plugin plugins/proxmox-lxc.js \
+  --workspace-auth-mode=scoped \
   --proxmox-ip-address 192.168.1.50/24 \
   --proxmox-gateway 192.168.1.1
 ```
@@ -125,13 +126,14 @@ Pool example:
 
 ```sh
 mcwsd daemon --plugin plugins/proxmox-lxc.js \
+  --workspace-auth-mode=scoped \
   --ip-base-network 192.168.1.200/24 --ip-pool-size 50
 ```
 
 DHCP example (omit both):
 
 ```sh
-mcwsd daemon --plugin plugins/proxmox-lxc.js
+mcwsd daemon --plugin plugins/proxmox-lxc.js --workspace-auth-mode=scoped
 ```
 
 > **Network on/off.** Like the VM runtime, `SetNetwork` is a no-op: LXC
@@ -145,6 +147,7 @@ mcwsd daemon --plugin plugins/proxmox-lxc.js
 export PVE_API_TOKEN="PVEAPIToken=root@pam!mcwsd=…"
 
 mcwsd daemon \
+  --workspace-auth-mode=scoped \
   --plugin plugins/proxmox-lxc.js \
   --proxmox-api-url https://pve.example:8006 \
   --proxmox-node pve1 \

@@ -8,6 +8,15 @@ The daemon exposes a JSON-over-HTTP API for creating and managing temporary work
 Authorization: Bearer <token>
 ```
 
+There are two token classes:
+
+- The **admin token** (`MCWSD_TOKEN`) controls provisioning, `/admin/*`, and token minting.
+- A **workspace token** (returned as `workspace_token` when a workspace is created) authorizes only its own `/workspaces/{id}/...` routes. Agents should receive workspace tokens, never the admin token.
+
+The daemon must be started with `--workspace-auth-mode=scoped` or `--workspace-auth-mode=strict`. In `strict` mode the admin token is rejected on workspace routes; in `scoped` mode it is accepted as a control-plane break-glass credential.
+
+Clients should store the `workspace_token` returned by `POST /workspaces` and send it on every subsequent `/workspaces/{id}/...` request. The Go client (`pkg/wsdclient`) does this automatically and can expose a `ForWorkspace(id)` client that has no workspace-ID parameter at all.
+
 On every response, the daemon also includes `X-Correlation-ID` for request tracing.
 
 ## Base URL
@@ -64,6 +73,7 @@ Success response (inline completion):
 ```json
 {
   "workspace_id": "ws-123",
+  "workspace_token": "wst_<workspace-capability>",
   "os": "linux",
   "work_dir": "/workspace/repo",
   "profile": {
@@ -85,8 +95,26 @@ Success response (backgrounded):
 ```json
 {
   "workspace_id": "ws-123",
+  "workspace_token": "wst_<workspace-capability>",
   "job_id": "job-456",
   "status": "queued"
+}
+```
+
+The workspace token is usable as soon as the workspace exists; it can be used to poll the provisioning job with `GET /workspaces/{id}/jobs/{job_id}`.
+
+### POST /workspaces/{id}/token
+
+Admin-only. Re-issues the workspace token for an existing or recovered
+workspace. Useful after rotating `MCWSD_TOKEN`, or when an operator needs to
+act on a leftover without using the admin token.
+
+Response:
+
+```json
+{
+  "workspace_id": "ws-123",
+  "workspace_token": "wst_<workspace-capability>"
 }
 ```
 
@@ -456,10 +484,11 @@ Response:
 
 ## Authentication and security notes
 
-- Every request must use the daemon's shared bearer token.
-- Authorization headers are checked exactly as `Bearer <token>`.
+- `POST /workspaces`, `/admin/*`, and `POST /workspaces/{id}/token` require the admin token.
+- Every `/workspaces/{id}/...` route requires a workspace token matching `{id}`. In `scoped` mode the admin token is also accepted; in `strict` mode it is not.
+- A workspace token is scoped to one workspace ID and cannot authorize another workspace.
 - Audit logs redact secret-bearing keys, including `Authorization`, `token`, `password`, and `api_key`.
-- The API is intentionally simple and AI-client friendly; it is not designed to expose per-user identity or authorization scopes.
+- The API identifies workspaces, not individual users. If multiple users or agents share a daemon, give each workspace its own token and keep the admin token in the control plane.
 
 ## Compatibility note
 

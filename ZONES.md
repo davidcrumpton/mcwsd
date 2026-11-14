@@ -278,6 +278,7 @@ not for many concurrent zones.
 
 ```sh
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
@@ -294,6 +295,7 @@ Give each zone its own unused IPv4 address on the same LAN as the global zone:
 
 ```sh
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
@@ -324,6 +326,7 @@ uplink and delegates it to the zone; the zone runs a DHCP client on it.
 
 ```sh
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode exclusive \
   --zones-interface e1000g0 \
@@ -366,6 +369,7 @@ boot:
 
 ```sh
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode exclusive \
   --zones-interface e1000g0 \
@@ -394,6 +398,7 @@ addresses from a pool, mirroring the FreeBSD runtime's
 
 ```sh
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
@@ -504,6 +509,7 @@ These mirror the FreeBSD jail plugin flags.
 ```sh
 MCWSD_TOKEN="$(openssl rand -hex 16)" \
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \
   --zones-interface net0 \
@@ -522,6 +528,7 @@ mcwsd daemon --plugin plugins/zones.js \
 
 ```sh
 mcwsd daemon --plugin plugins/zones.js \
+  --workspace-auth-mode=scoped \
   --zones-zonepath /rpool1/zones \
   --zones-base-zone wsd-golden \
   --zones-network-mode exclusive \
@@ -546,6 +553,7 @@ set -a
 [ -f /etc/mcwsd/env ] && . /etc/mcwsd/env
 set +a
 exec /usr/local/bin/mcwsd daemon \
+  --workspace-auth-mode=scoped \
   --plugin /usr/local/lib/mcwsd/plugins/zones.js \
   --zones-zonepath /rpool1/zones \
   --zones-network-mode shared \

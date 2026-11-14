@@ -4,11 +4,12 @@ This directory contains CLI tools to test all mcwsd (Workspace Daemon) functions
 
 ## Prerequisites
 
-1. **mcwsd daemon must be running** on `http://localhost:9080` (or configured base URL)
-2. **Token must be set** - Either:
+1. **mcwsd daemon must be running** on `http://localhost:9080` (or configured base URL), started with `--workspace-auth-mode=scoped` or `--workspace-auth-mode=strict`.
+2. **Admin token must be set** - Either:
    - Set `MCWSD_TOKEN` environment variable before running tests
    - Or edit the `token` value in the test scripts
    - Or use the token printed by mcwsd on startup
+3. **Workspace token for strict mode** - `prepare` and `full-test` learn the token from the daemon's `workspace_token` response automatically. For one-off commands against an existing workspace, pass `--workspace-token wst_...` or set `MCWSD_WORKSPACE_TOKEN`. In `scoped` mode this is optional because the admin token is accepted as break-glass.
 
 ## Tools
 
@@ -62,7 +63,7 @@ Edit the `get_tools()` function in either script to configure:
 def get_tools():
     tools = Tools()
     tools.valves.base_url = "http://localhost:9080"  # mcwsd daemon URL
-    tools.valves.token = "your-token-here"           # Auth token from mcwsd
+    tools.valves.token = "your-admin-token-here"     # MCWSD_TOKEN (control plane)
     tools.valves.timeout_seconds = 60                # Default timeout
     return tools
 ```
@@ -70,9 +71,20 @@ def get_tools():
 Or set environment variables before running:
 
 ```bash
-export MCWSD_TOKEN="your-token-here"
+export MCWSD_TOKEN="your-admin-token-here"
+export MCWSD_BASE_URL="http://localhost:9080"
 python test_mcwsd_cli.py full-test https://github.com/user/repo.git main
 ```
+
+For a strict-mode daemon, one-off commands need the workspace's token:
+
+```bash
+python test_mcwsd_cli.py --workspace-token wst_... exec ws-abc123 "go test ./..."
+# or:
+MCWSD_WORKSPACE_TOKEN=wst_... python test_mcwsd_functions.py all ws-abc123
+```
+
+The `prepare` and `full-test` commands handle this automatically because the tool stores the `workspace_token` returned by the daemon.
 
 ## Example Output
 
@@ -88,6 +100,7 @@ Preparing workspace from https://github.com/example/repo.git (ref=main)...
 Response:
 {
   "workspace_id": "ws-abc123",
+  "workspace_token": "wst_<workspace-capability>",
   "os": "linux",
   "profile": {
     "language": "python",
@@ -159,7 +172,12 @@ Error preparing workspace: HTTPConnectionPool(host='localhost', port=9080): Max 
 ```
 Error preparing workspace: 401 Client Error: Unauthorized
 ```
-→ Set the correct token in `tools.valves.token` or `MCWSD_TOKEN` env var
+→ Set the correct admin token in `tools.valves.token` or `MCWSD_TOKEN` env var.
+
+```
+Error executing command: 401 Client Error: Unauthorized
+```
+→ In `strict` mode, workspace routes need the workspace token. Use `--workspace-token wst_...`, set `MCWSD_WORKSPACE_TOKEN`, or use `prepare`/`full-test` so the tool learns it automatically.
 
 ### Invalid workspace ID
 ```
