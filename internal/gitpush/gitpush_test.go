@@ -622,6 +622,172 @@ func TestValidateRepoURL(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// PushURLPolicy / ResolvePushRepoURL
+// ---------------------------------------------------------------------------
+
+func TestValidate_PushURLPolicyDefaultsToFail(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeSSH,
+		GitLabToken:   "token",
+		GitLabAPIBase: "https://gitlab.example.com/api/v4",
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if cfg.PushURLPolicy != PushURLPolicyFail {
+		t.Errorf("PushURLPolicy = %q, want %q", cfg.PushURLPolicy, PushURLPolicyFail)
+	}
+}
+
+func TestValidate_InvalidPushURLPolicy(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeSSH,
+		PushURLPolicy: "guess",
+		GitLabToken:   "token",
+		GitLabAPIBase: "https://gitlab.example.com/api/v4",
+	}
+	if cfg.Validate() == nil {
+		t.Error("expected error for invalid git-push-url-policy, got nil")
+	}
+}
+
+func TestResolvePushRepoURL_MatchingSchemeUnchanged(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		url  string
+	}{
+		{
+			name: "ssh mode with ssh URL",
+			cfg:  Config{AuthMode: AuthModeSSH, ForgeType: "github"},
+			url:  "git@github.com:owner/repo.git",
+		},
+		{
+			name: "token mode with https URL",
+			cfg:  Config{AuthMode: AuthModeToken, ForgeType: "github"},
+			url:  "https://github.com/owner/repo.git",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ResolvePushRepoURL(tc.cfg, tc.url)
+			if err != nil {
+				t.Fatalf("ResolvePushRepoURL: %v", err)
+			}
+			if got != tc.url {
+				t.Errorf("ResolvePushRepoURL = %q, want %q", got, tc.url)
+			}
+		})
+	}
+}
+
+func TestResolvePushRepoURL_FailByDefault(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		url  string
+	}{
+		{
+			name: "ssh mode with https URL",
+			cfg:  Config{AuthMode: AuthModeSSH, ForgeType: "github"},
+			url:  "https://github.com/owner/repo.git",
+		},
+		{
+			name: "token mode with ssh URL",
+			cfg:  Config{AuthMode: AuthModeToken, ForgeType: "github"},
+			url:  "git@github.com:owner/repo.git",
+		},
+		{
+			name: "explicit fail policy",
+			cfg:  Config{AuthMode: AuthModeSSH, PushURLPolicy: PushURLPolicyFail, ForgeType: "github"},
+			url:  "https://github.com/owner/repo.git",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ResolvePushRepoURL(tc.cfg, tc.url); err == nil {
+				t.Errorf("ResolvePushRepoURL(%q) = nil error, want mismatch error", tc.url)
+			}
+		})
+	}
+}
+
+func TestResolvePushRepoURL_ConvertSSHToHTTPS(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeToken,
+		PushURLPolicy: PushURLPolicyConvert,
+		ForgeType:     "github",
+	}
+	got, err := ResolvePushRepoURL(cfg, "git@github.com:owner/repo.git")
+	if err != nil {
+		t.Fatalf("ResolvePushRepoURL: %v", err)
+	}
+	if want := "https://github.com/owner/repo.git"; got != want {
+		t.Errorf("ResolvePushRepoURL = %q, want %q", got, want)
+	}
+}
+
+func TestResolvePushRepoURL_ConvertHTTPSToSSH(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeSSH,
+		PushURLPolicy: PushURLPolicyConvert,
+		ForgeType:     "github",
+	}
+	got, err := ResolvePushRepoURL(cfg, "https://github.com/owner/repo.git")
+	if err != nil {
+		t.Fatalf("ResolvePushRepoURL: %v", err)
+	}
+	if want := "git@github.com:owner/repo.git"; got != want {
+		t.Errorf("ResolvePushRepoURL = %q, want %q", got, want)
+	}
+}
+
+func TestResolvePushRepoURL_ConvertUsesConfiguredForgeHost(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeSSH,
+		PushURLPolicy: PushURLPolicyConvert,
+		ForgeType:     "gitlab",
+		GitLabAPIBase: "https://gitlab.example.com/api/v4",
+	}
+	got, err := ResolvePushRepoURL(cfg, "https://gitlab.example.com/group/repo.git")
+	if err != nil {
+		t.Fatalf("ResolvePushRepoURL: %v", err)
+	}
+	if want := "git@gitlab.example.com:group/repo.git"; got != want {
+		t.Errorf("ResolvePushRepoURL = %q, want %q", got, want)
+	}
+}
+
+func TestResolvePushRepoURL_ConvertRejectsForeignHost(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeSSH,
+		PushURLPolicy: PushURLPolicyConvert,
+		ForgeType:     "github",
+	}
+	if _, err := ResolvePushRepoURL(cfg, "https://evil.example.com/owner/repo.git"); err == nil {
+		t.Error("expected conversion of a foreign-host URL to fail")
+	}
+}
+
+func TestResolvePushRepoURL_ConvertRejectsPort(t *testing.T) {
+	cfg := Config{
+		AuthMode:      AuthModeSSH,
+		PushURLPolicy: PushURLPolicyConvert,
+		ForgeType:     "github",
+	}
+	if _, err := ResolvePushRepoURL(cfg, "https://github.com:8443/owner/repo.git"); err == nil {
+		t.Error("expected conversion of a URL with an explicit port to fail")
+	}
+}
+
+func TestResolvePushRepoURL_RejectsInvalidURL(t *testing.T) {
+	cfg := Config{AuthMode: AuthModeSSH, ForgeType: "github"}
+	if _, err := ResolvePushRepoURL(cfg, "/tmp/repo"); err == nil {
+		t.Error("expected invalid repository URL to fail")
+	}
+}
+
 func TestGitEnv_RestrictsProtocols(t *testing.T) {
 	env := GitEnv(Config{AuthMode: AuthModeToken})
 	found := ""

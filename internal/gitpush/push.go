@@ -40,14 +40,33 @@ const (
 	AuthModeToken AuthMode = "token"
 )
 
+// PushURLPolicy controls how a per-request repository URL is reconciled with
+// the daemon's startup-time AuthMode when performing the privileged push. It
+// deliberately does not affect provisioning or read-only clones: an anonymous
+// HTTPS clone is a legitimate read-only operation even under ssh auth mode.
+type PushURLPolicy string
+
+const (
+	// PushURLPolicyFail rejects a push whose URL scheme does not match
+	// AuthMode. This is the default, so a mismatch surfaces as a clear error
+	// instead of git's misleading "could not read Username" failure.
+	PushURLPolicyFail PushURLPolicy = "fail"
+	// PushURLPolicyConvert rewrites the push URL to the scheme implied by
+	// AuthMode, preserving host and path. Conversion is only attempted for
+	// the configured forge host so the daemon never guesses a different
+	// repository.
+	PushURLPolicyConvert PushURLPolicy = "convert"
+)
+
 // Config holds host-level settings needed to reach GitLab. These should be
 // sourced from GKM at daemon startup, never hardcoded, and never passed in
 // per-request. The container this config's credentials belong to never
 // sees any of these values — only the gitpush package (running purely on
 // the host) ever reads them.
 type Config struct {
-	AuthMode  AuthMode
-	ForgeType string
+	AuthMode      AuthMode
+	PushURLPolicy PushURLPolicy
+	ForgeType     string
 
 	// SSH mode fields — used for git push transport only.
 	SSHKeyPath        string // path to a private key file, e.g. from GKM
@@ -105,6 +124,14 @@ func (c *Config) Validate() error {
 		// the others use a documented fixed placeholder).
 	default:
 		return fmt.Errorf("invalid git-auth-mode %q: must be %q or %q", c.AuthMode, AuthModeSSH, AuthModeToken)
+	}
+
+	switch c.PushURLPolicy {
+	case "":
+		c.PushURLPolicy = PushURLPolicyFail
+	case PushURLPolicyFail, PushURLPolicyConvert:
+	default:
+		return fmt.Errorf("invalid git-push-url-policy %q: must be %q or %q", c.PushURLPolicy, PushURLPolicyFail, PushURLPolicyConvert)
 	}
 
 	forgeType := strings.ToLower(strings.TrimSpace(c.ForgeType))
@@ -225,6 +252,16 @@ func PushAndOpenMR(ctx context.Context, cfg Config, req Request) (*Result, error
 	if err := ValidateRepoURL(req.RepoURL); err != nil {
 		return nil, err
 	}
+	pushRepoURL, err := ResolvePushRepoURL(cfg, req.RepoURL)
+	if err != nil {
+		return nil, err
+	}
+	if pushRepoURL != req.RepoURL {
+		internal.Log.Info("push_url_converted",
+			"repo_url", RedactRepoURL(req.RepoURL),
+			"push_url", RedactRepoURL(pushRepoURL),
+			"auth_mode", string(cfg.AuthMode))
+	}
 	if req.Branch == "" {
 		return nil, fmt.Errorf("branch name must be set by the server, not left empty")
 	}
@@ -245,9 +282,9 @@ func PushAndOpenMR(ctx context.Context, cfg Config, req Request) (*Result, error
 
 	cloneDir := filepath.Join(scratchDir, "repo")
 	env := GitEnv(cfg)
-	authArgs := GitAuthArgs(cfg, req.RepoURL)
+	authArgs := GitAuthArgs(cfg, pushRepoURL)
 
-	cloneArgs := append(append([]string{}, authArgs...), "clone", "--no-checkout", req.RepoURL, cloneDir)
+	cloneArgs := append(append([]string{}, authArgs...), "clone", "--no-checkout", pushRepoURL, cloneDir)
 	if err := runGit(ctx, "", env, cloneArgs...); err != nil {
 		return nil, fmt.Errorf("failed to clone repo: %w", err)
 	}
@@ -422,6 +459,103 @@ func ValidateRepoURL(raw string) error {
 	}
 
 	return fmt.Errorf("unsupported repository URL %q: only https://, http:// and git@host:path are allowed", raw)
+}
+
+// ResolvePushRepoURL returns the repository URL git should use for the
+// privileged push, applying the daemon's startup-time PushURLPolicy. Only the
+// push uses the resolved value: provisioning and read-only clones keep using
+// the URL exactly as supplied, because an anonymous HTTPS clone is valid even
+// when the daemon is configured for SSH pushes. validateProvision calls this
+// solely to warn about an eventual push mismatch; it never rejects a provision.
+//
+// With PushURLPolicy=convert, a mismatched URL is rewritten to the transport
+// implied by AuthMode (https for token mode, git@host:path for ssh mode)
+// without changing host or path. Conversion is refused unless the URL's host
+// matches the configured forge host, so the daemon never invents a target.
+func ResolvePushRepoURL(cfg Config, raw string) (string, error) {
+	if err := ValidateRepoURL(raw); err != nil {
+		return "", err
+	}
+
+	policy := cfg.PushURLPolicy
+	if policy == "" {
+		policy = PushURLPolicyFail
+	}
+
+	isHTTP := strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "http://")
+	wantSSH := cfg.AuthMode == AuthModeSSH
+	schemeMatches := (wantSSH && !isHTTP) || (!wantSSH && isHTTP)
+	if schemeMatches {
+		return raw, nil
+	}
+
+	if policy == PushURLPolicyFail {
+		if wantSSH {
+			return "", fmt.Errorf("repository URL %q uses HTTP(S) but --git-auth-mode=ssh pushes over SSH; provision from an SSH URL or set --git-push-url-policy=convert", raw)
+		}
+		return "", fmt.Errorf("repository URL %q uses SSH but --git-auth-mode=token pushes over HTTP(S); provision from an HTTPS URL or set --git-push-url-policy=convert", raw)
+	}
+
+	forgeType := detectForgeType(raw, cfg.ForgeType)
+	allowedHost, ok := cfg.forgeGitHost(forgeType)
+	if !ok {
+		return "", fmt.Errorf("cannot convert repository URL %q for push: no forge git host is configured", raw)
+	}
+	repoHost, ok := repoURLHost(raw)
+	if !ok || !strings.EqualFold(repoHost, allowedHost) {
+		return "", fmt.Errorf("cannot convert repository URL %q for push: host does not match the configured forge host %q", raw, allowedHost)
+	}
+
+	var converted string
+	var err error
+	if wantSSH {
+		converted, err = httpURLToSSH(raw)
+	} else {
+		converted, err = sshURLToHTTPS(raw)
+	}
+	if err != nil {
+		return "", fmt.Errorf("cannot convert repository URL %q for push: %w", raw, err)
+	}
+	if err := ValidateRepoURL(converted); err != nil {
+		return "", fmt.Errorf("cannot convert repository URL %q for push: %w", raw, err)
+	}
+	return converted, nil
+}
+
+// httpURLToSSH converts an http(s) repository URL into the scp-style SSH form,
+// preserving the host and path. The scp-style form cannot express a port, so a
+// URL with an explicit port is rejected rather than silently dropped.
+func httpURLToSSH(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse URL: %w", err)
+	}
+	if u.Port() != "" {
+		return "", fmt.Errorf("SSH URL form does not carry a port")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("missing host")
+	}
+	if strings.Contains(host, ":") {
+		return "", fmt.Errorf("SSH URL form does not support IPv6 hosts")
+	}
+	path := strings.TrimPrefix(u.EscapedPath(), "/")
+	if path == "" {
+		return "", fmt.Errorf("missing path")
+	}
+	return "git@" + host + ":" + path, nil
+}
+
+// sshURLToHTTPS converts a scp-style SSH repository URL into an HTTPS URL,
+// preserving the host and path.
+func sshURLToHTTPS(raw string) (string, error) {
+	rest := strings.TrimPrefix(raw, "git@")
+	host, path, ok := strings.Cut(rest, ":")
+	if !ok || host == "" || path == "" {
+		return "", fmt.Errorf("unsupported SSH URL form")
+	}
+	return "https://" + host + "/" + strings.TrimPrefix(path, "/"), nil
 }
 
 // RedactRepoURL removes embedded credentials from an http(s) repository URL so

@@ -428,6 +428,15 @@ These settings control the single privileged `commit_and_pr` capability, which i
 - Valid values: `ssh` or `token`
 - Leave unset to disable commit-and-pr support.
 
+### `--git-push-url-policy`
+
+- Type: string
+- Default: `fail`, or the value of `MCWSD_GIT_PUSH_URL_POLICY`
+- Valid values: `fail` or `convert`
+- Controls how `commit_and_pr` reconciles a repository URL with `--git-auth-mode` when their transports differ. It does not affect provisioning or read-only clones, so a public HTTPS repository can still be cloned for reading under `ssh` mode.
+- `fail`: reject the push with a clear mismatch error. This is the default.
+- `convert`: rewrite the push target to the transport implied by `--git-auth-mode` (`https://` to `git@host:path` for `ssh`, or the reverse for `token`), preserving host and path. Conversion only succeeds when the URL host matches the configured forge host; otherwise it fails rather than guessing.
+
 ### `--forge-type`
 
 - Type: string

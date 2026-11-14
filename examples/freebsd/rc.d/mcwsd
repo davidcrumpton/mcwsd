@@ -56,6 +56,7 @@ load_rc_config $name
 : ${mcwsd_provision_timeout:="0s"}
 : ${mcwsd_forge_type:=""}   # forgejo, github, gitlab, gitea - leave empty to disable commit_and_pr
 : ${mcwsd_git_auth_mode:="token"}  # "ssh" or "token"
+: ${mcwsd_git_push_url_policy:="fail"}  # "fail" or "convert" (push only; read-only clones unaffected)
 : ${mcwsd_git_commit_name:="mcwsd-agent"}  # author name for commits
 : ${mcwsd_git_commit_email:="mcwsd-agent@localhost"}  # author email for commits
 : ${mcwsd_forgejo_token:=""}
@@ -139,6 +140,9 @@ command_args="${command_args} --provision-wait-seconds=${mcwsd_provision_wait_se
 command_args="${command_args} --provision-timeout=${mcwsd_provision_timeout}"
 command_args="${command_args} --forge-type=${mcwsd_forge_type}"
 command_args="${command_args} --git-auth-mode=${mcwsd_git_auth_mode}"
+if [ -n "${mcwsd_git_push_url_policy}" ]; then
+    command_args="${command_args} --git-push-url-policy=${mcwsd_git_push_url_policy}"
+fi
 command_args="${command_args} --bind-address=${mcwsd_bind_address}"
 command_args="${command_args} --jobs-file=${mcwsd_jobs_file}"
 command_args="${command_args} --exec-wait-seconds=${mcwsd_exec_wait_seconds}"
