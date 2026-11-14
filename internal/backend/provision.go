@@ -435,25 +435,6 @@ func (b *Backend) validateProvision(spec internal.WorkspaceSpec) error {
 		return fmt.Errorf("repository provisioning is unavailable: no forge authentication is configured")
 	}
 
-	// Do not reject a read-only provision just because the URL's transport
-	// differs from the push auth mode: an anonymous HTTPS clone is valid even
-	// when the daemon pushes over SSH. Surface the eventual push mismatch now
-	// so it is not discovered only after the workspace is prepared.
-	if b.gitPushConfig.AuthMode != "" {
-		if resolved, err := gitpush.ResolvePushRepoURL(b.gitPushConfig, spec.RepoURL); err != nil {
-			logger.Warn("push_url_mismatch",
-				"repo_url", gitpush.RedactRepoURL(spec.RepoURL),
-				"auth_mode", string(b.gitPushConfig.AuthMode),
-				"policy", string(b.gitPushConfig.PushURLPolicy),
-				"error", err)
-		} else if resolved != spec.RepoURL {
-			logger.Info("push_url_will_convert",
-				"repo_url", gitpush.RedactRepoURL(spec.RepoURL),
-				"push_url", gitpush.RedactRepoURL(resolved),
-				"auth_mode", string(b.gitPushConfig.AuthMode))
-		}
-	}
-
 	return nil
 }
 
