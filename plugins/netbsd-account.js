@@ -107,7 +107,7 @@ function destroyAccount(account, home) {
 const netbsdAccountPlugin = {
   name: "netbsd-account",
   description: "NetBSD workspace accounts (process isolation), driven through useradd(8) and sudo/doas",
-  version: "1.0.0",
+  version: "1.0.1",
   os: "netbsd",
   isolation: "process",
   binaries: [
@@ -158,6 +158,14 @@ const netbsdAccountPlugin = {
       usage: "Privilege escalation command for account lifecycle and running commands as the workspace account (sudo or doas)"
     }
   ],
+  init() {
+    const esc = escalator();
+    const argv = esc !== "" ? [esc, "userinfo", "root"] : ["userinfo", "root"];
+    const res = host.run(argv);
+    if (res.exit_code !== 0) {
+      throw new Error("userinfo(8) is unavailable through " + (esc !== "" ? esc : "the host") + ": " + str(res.stderr).trim());
+    }
+  },
   validate() {
     const esc = escalator();
     if (esc === "") {

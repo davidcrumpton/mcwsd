@@ -8,7 +8,7 @@ function networkName() {
 const dockerPlugin = {
   name: "docker",
   description: "Docker Engine runtime, driven through the docker CLI",
-  version: "1.0.0",
+  version: "1.0.1",
   os: "linux",
   isolation: "container",
   binaries: ["docker", "mkdir"],
@@ -20,6 +20,12 @@ const dockerPlugin = {
       usage: "Docker network containers attach to for provisioning and exec network access"
     }
   ],
+  init() {
+    const res = host.run(["docker", "info"]);
+    if (res.exit_code !== 0) {
+      throw new Error("docker is unavailable (is the Docker daemon running and accessible?): " + str(res.stderr).trim());
+    }
+  },
   provision(spec) {
     const name = "wsd-" + spec.workspace_id;
     const pull = host.run(["docker", "pull", spec.image]);

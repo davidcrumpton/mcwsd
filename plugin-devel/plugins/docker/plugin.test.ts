@@ -10,6 +10,7 @@ const plugin = pluginModule as unknown as {
   name: string;
   binaries: string[];
   options: { flag: string }[];
+  init: () => void;
   recover: (id: string, workDir: string) => { native_id: string; work_dir: string };
   execArgs: (h: unknown, cmd: string[], wd: string, env: string[], o: { stdin: boolean; root: boolean }) => string[];
   setNetwork: (h: { native_id: string }, enabled: boolean) => void;
@@ -23,6 +24,25 @@ beforeEach(() => {
 describe("docker plugin", () => {
   it("declares the docker-network option for --help", () => {
     expect(plugin.options.map((o) => o.flag)).toContain("docker-network");
+  });
+
+  it("checks the Docker daemon at startup", () => {
+    const runs: string[][] = [];
+    installMockHost({
+      run: (argv: string[]) => {
+        runs.push(argv);
+        return { stdout: "", stderr: "", exit_code: 0 };
+      },
+    });
+    plugin.init();
+    expect(runs[0]).toEqual(["docker", "info"]);
+  });
+
+  it("fails startup when Docker is unavailable", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "Cannot connect to the Docker daemon", exit_code: 1 }),
+    });
+    expect(() => plugin.init()).toThrow(/docker is unavailable/);
   });
 
   it("maps a plain exec to argv", () => {

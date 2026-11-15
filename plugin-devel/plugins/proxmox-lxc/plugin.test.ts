@@ -12,6 +12,7 @@ const plugin = pluginModule as unknown as {
   isolation: string;
   binaries: string[];
   options: { flag: string; type: string; default?: string }[];
+  init: () => void;
   provision: (spec: Record<string, unknown>) => Record<string, unknown>;
   destroy: (h: { native_id: string }) => void;
   destroyByID: (id: string) => void;
@@ -152,6 +153,22 @@ describe("proxmox-lxc plugin", () => {
     for (const want of ["proxmox-api-url", "proxmox-node", "proxmox-token-env", "proxmox-ostemplate", "proxmox-ip-address", "ip-base-network", "ip-pool-size", "proxmox-ssh-key", "proxmox-boot-timeout"]) {
       expect(flags).toContain(want);
     }
+  });
+
+  it("checks the Proxmox API at startup", () => {
+    const runs: RunCall[] = [];
+    captureHost(runs);
+
+    expect(() => plugin.init()).not.toThrow();
+    expect(runs[0].argv[0]).toBe("curl");
+    expect(url(runs[0].argv)).toBe("https://pve.example:8006/api2/json/nodes/pve1/status");
+  });
+
+  it("fails startup when the Proxmox API is unreachable", () => {
+    const runs: RunCall[] = [];
+    captureHost(runs, () => ({ stdout: "", stderr: "curl: (7) Failed to connect", exit_code: 7 }));
+
+    expect(() => plugin.init()).toThrow(/failed/);
   });
 
   it("maps an exec to an ssh argv with a PATH and cd payload", () => {

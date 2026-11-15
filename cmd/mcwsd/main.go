@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.5.000"
+	Version         = "0.5.001"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -603,7 +603,7 @@ func runDaemon(
 	if err := provisioner.Init(context.Background()); err != nil {
 		return fmt.Errorf("provisioner initialization failed (runtime=%s): %w", runtimeName, err)
 	}
-	internal.Log.Info("provisioner_initialized", "runtime", runtimeName)
+	internal.Log.Info("provisioner_initialized", "runtime", runtimeName, "plugin_version", scriptPluginRuntime.Version)
 
 	// Load administrator-authored environment hints, if any. A missing file is
 	// not an error; a malformed one is, so a typo surfaces at startup.

@@ -659,7 +659,7 @@ function destroyVM(vmid: string, workspaceID: string): void {
 const proxmoxLXCPlugin: RuntimePlugin = {
   name: "proxmox-lxc",
   description: "Proxmox VE LXC containers, driven through the REST API and ssh(1)",
-  version: "1.0.0",
+  version: "1.0.1",
   os: "linux",
   isolation: "container",
   binaries: ["curl", "ssh", "nc", "cat", "test"],
@@ -816,6 +816,11 @@ const proxmoxLXCPlugin: RuntimePlugin = {
     },
   ],
 
+  init(): void {
+    // A harmless privileged query verifies the API endpoint, node, and token.
+    apiCall("GET", "/nodes/" + nodeName() + "/status", []);
+  },
+
   validate(): void {
     validateConfig();
 
@@ -838,9 +843,6 @@ const proxmoxLXCPlugin: RuntimePlugin = {
     if (host.run(["test", "-r", pub]).exit_code !== 0) {
       throw new Error("proxmox SSH public key " + pub + " is not readable");
     }
-
-    // A harmless privileged query verifies the API endpoint, node, and token.
-    apiCall("GET", "/nodes/" + nodeName() + "/status", []);
   },
 
   provision(spec: ProvisionSpec): Handle {

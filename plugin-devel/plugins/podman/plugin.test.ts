@@ -9,6 +9,7 @@ import * as pluginModule from "./plugin";
 const plugin = pluginModule as unknown as {
   name: string;
   binaries: string[];
+  init: () => void;
   recover: (id: string, workDir: string) => { native_id: string; work_dir: string };
   execArgs: (h: unknown, cmd: string[], wd: string, env: string[], o: { stdin: boolean; root: boolean }) => string[];
 };
@@ -21,6 +22,25 @@ describe("podman plugin", () => {
   it("has correct metadata", () => {
     expect(plugin.name).toBe("podman");
     expect(plugin.binaries).toContain("podman");
+  });
+
+  it("checks podman at startup", () => {
+    const runs: string[][] = [];
+    installMockHost({
+      run: (argv: string[]) => {
+        runs.push(argv);
+        return { stdout: "", stderr: "", exit_code: 0 };
+      },
+    });
+    plugin.init();
+    expect(runs[0]).toEqual(["podman", "info"]);
+  });
+
+  it("fails startup when podman is unavailable", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "cannot connect to Podman", exit_code: 125 }),
+    });
+    expect(() => plugin.init()).toThrow(/podman is unavailable/);
   });
 
   it("maps a plain exec to argv", () => {

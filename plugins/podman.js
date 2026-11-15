@@ -5,11 +5,17 @@ function str(v) {
 const podmanPlugin = {
   name: "podman",
   description: "Podman rootless OCI runtime, driven through the podman CLI",
-  version: "1.0.0",
+  version: "1.0.1",
   os: "linux",
   isolation: "container",
   binaries: ["podman", "mkdir"],
   options: [],
+  init() {
+    const res = host.run(["podman", "info"]);
+    if (res.exit_code !== 0) {
+      throw new Error("podman is unavailable: " + str(res.stderr).trim());
+    }
+  },
   provision(spec) {
     const name = "wsd-" + spec.workspace_id;
     const pull = host.run(["podman", "pull", spec.image]);

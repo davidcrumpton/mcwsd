@@ -12,6 +12,7 @@ const plugin = pluginModule as unknown as {
   isolation: string;
   binaries: string[];
   options: { flag: string }[];
+  init: () => void;
   validate: () => void;
   provision: (spec: { workspace_id: string; instance_id: string; work_dir: string }) => { native_id: string; work_dir: string; username: string; privilege: string; home: string };
   destroy: (h: { native_id: string; home: string }) => void;
@@ -146,6 +147,21 @@ describe("netbsd-account plugin", () => {
       "sudo", "useradd", "-d", home, "-m", "-M", "700", "-g", account, "-G", "wsd", "-s", "/sbin/nologin",
       "-L", "daemon", account,
     ]);
+  });
+
+  it("checks userinfo through the escalator at startup", () => {
+    const runs: string[][] = [];
+    installMockHost({ options: hostOptions, run: mockRun(runs) });
+    expect(() => plugin.init()).not.toThrow();
+    expect(runs[0]).toEqual(["sudo", "userinfo", "root"]);
+  });
+
+  it("fails startup when userinfo is unavailable", () => {
+    installMockHost({
+      options: hostOptions,
+      run: () => ({ stdout: "", stderr: "userinfo: not found", exit_code: 1 }),
+    });
+    expect(() => plugin.init()).toThrow(/userinfo\(8\) is unavailable/);
   });
 
   it("validates that the escalator reaches root", () => {

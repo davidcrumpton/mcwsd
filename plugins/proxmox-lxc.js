@@ -497,7 +497,7 @@ function destroyVM(vmid, workspaceID) {
 const proxmoxLXCPlugin = {
   name: "proxmox-lxc",
   description: "Proxmox VE LXC containers, driven through the REST API and ssh(1)",
-  version: "1.0.0",
+  version: "1.0.1",
   os: "linux",
   isolation: "container",
   binaries: ["curl", "ssh", "nc", "cat", "test"],
@@ -653,6 +653,9 @@ const proxmoxLXCPlugin = {
       usage: "Bound on a single SSH readiness probe while waiting for a container to boot"
     }
   ],
+  init() {
+    apiCall("GET", "/nodes/" + nodeName() + "/status", []);
+  },
   validate() {
     validateConfig();
     if (apiToken() === "") {
@@ -672,7 +675,6 @@ const proxmoxLXCPlugin = {
     if (host.run(["test", "-r", pub]).exit_code !== 0) {
       throw new Error("proxmox SSH public key " + pub + " is not readable");
     }
-    apiCall("GET", "/nodes/" + nodeName() + "/status", []);
   },
   provision(spec) {
     validateConfig();

@@ -11,7 +11,7 @@ function containerName(workspaceID) {
 const appleContainerPlugin = {
   name: "apple-container",
   description: "Apple OCI containers on macOS, driven through the container CLI",
-  version: "1.0.0",
+  version: "1.0.1",
   os: "linux",
   isolation: "container",
   binaries: ["container", "mkdir"],
@@ -23,6 +23,14 @@ const appleContainerPlugin = {
       usage: 'Apple container network attached at create time (use "none" for no network; attachment cannot be changed later)'
     }
   ],
+  init() {
+    const res = host.run(["container", "system", "status"]);
+    if (res.exit_code !== 0) {
+      throw new Error(
+        "apple container service is unavailable (start it with `container system start`): " + str(res.stderr).trim()
+      );
+    }
+  },
   provision(spec) {
     const name = containerName(spec.workspace_id);
     const pull = host.run(["container", "image", "pull", spec.image]);

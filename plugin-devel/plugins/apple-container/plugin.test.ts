@@ -13,6 +13,7 @@ const plugin = pluginModule as unknown as {
   isolation: string;
   binaries: string[];
   options: { flag: string; type: string; default?: string }[];
+  init: () => void;
   provision: (spec: Record<string, unknown>) => Record<string, unknown>;
   destroy: (h: { native_id: string }) => void;
   destroyByID: (id: string) => void;
@@ -47,6 +48,23 @@ describe("apple container plugin", () => {
     expect(plugin.isolation).toBe("container");
     expect(plugin.binaries).toEqual(["container", "mkdir"]);
     expect(plugin.options.map((o) => o.flag)).toContain("container-network");
+  });
+
+  it("checks the container service at startup", () => {
+    const runs: RunCall[] = [];
+    captureHost(runs);
+
+    plugin.init();
+
+    expect(runs[0].argv).toEqual(["container", "system", "status"]);
+  });
+
+  it("fails startup when the container service is unavailable", () => {
+    installMockHost({
+      run: () => ({ stdout: "", stderr: "container services are not running", exit_code: 1 }),
+    });
+
+    expect(() => plugin.init()).toThrow(/apple container service is unavailable/);
   });
 
   it("pulls, creates, and starts a container with the workspace mounts", () => {
