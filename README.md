@@ -133,12 +133,14 @@ The daemon uses Bearer token authentication with two credential classes:
 - `scoped`: workspace tokens are required for workspace routes, and the admin token is also accepted as a control-plane break-glass credential. Use this when migrating existing clients.
 - `strict`: workspace routes accept only the matching workspace token. The admin token is limited to provisioning, `/admin/*`, and `POST /workspaces/{id}/token`. Use this for cross-workspace isolation.
 
-1. **Set the admin token via environment variable**:
+1. **Generate and set the admin token via environment variable**:
 
 ```bash
-  export MCWSD_TOKEN="your-secure-token"
+  export MCWSD_TOKEN="$(mcwsd token)"
   mcwsd daemon --workspace-auth-mode=strict
 ```
+
+   `mcwsd token` mints a cryptographically random `wsd-...` token from mcwsd's own generator; no external tooling is required.
 
 2. **Daemon generates a random admin token** (if `MCWSD_TOKEN` not set and the listener is loopback):
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -57,5 +58,37 @@ func TestResolvePerRuntimePathRejectsUnsafeName(t *testing.T) {
 		if _, err := safePluginName(name); err == nil {
 			t.Errorf("safePluginName(%q) = nil, want error", name)
 		}
+	}
+}
+
+func TestTokenCmdGeneratesDistinctWSDTokens(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 2; i++ {
+		var out bytes.Buffer
+		cmd := newTokenCmd()
+		cmd.SetOut(&out)
+		cmd.SetArgs(nil)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("token command: %v", err)
+		}
+		token := strings.TrimSpace(out.String())
+		if !strings.HasPrefix(token, "wsd-") {
+			t.Fatalf("token = %q, want wsd- prefix", token)
+		}
+		if got, want := len(strings.TrimPrefix(token, "wsd-")), 64; got != want {
+			t.Fatalf("token entropy length = %d, want %d", got, want)
+		}
+		if seen[token] {
+			t.Fatalf("token command returned duplicate token %q", token)
+		}
+		seen[token] = true
+	}
+}
+
+func TestTokenCmdRejectsArguments(t *testing.T) {
+	cmd := newTokenCmd()
+	cmd.SetArgs([]string{"extra"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected error for unexpected argument")
 	}
 }

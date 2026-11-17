@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.5.001"
+	Version         = "0.5.002"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -128,6 +128,7 @@ func main() {
 		daemonCmd,
 		newCleanupCmd(),
 		newStatusCmd(),
+		newTokenCmd(),
 		newVersionCmd(),
 	)
 
@@ -1025,6 +1026,26 @@ func runStatus(stateFile string) error {
 }
 
 // ---------------------------------------------------------------------------
+// mcwsd token
+// ---------------------------------------------------------------------------
+
+func newTokenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "token",
+		Short: "Generate a cryptographically random admin (MCWSD_TOKEN) bearer token",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			token, err := generateAuthToken()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), token)
+			return nil
+		},
+	}
+}
+
+// ---------------------------------------------------------------------------
 // mcwsd version
 // ---------------------------------------------------------------------------
 
@@ -1076,7 +1097,7 @@ func preScanPluginPath(args []string) string {
 func invokedSubcommand(args []string) string {
 	for _, a := range args[1:] {
 		switch a {
-		case "daemon", "cleanup", "status", "version":
+		case "daemon", "cleanup", "status", "token", "version":
 			return a
 		}
 	}
