@@ -1,0 +1,22 @@
+# Version control and local build output
+.git
+.gitignore
+mcwsd
+dist
+
+# Plugin authoring tree; only plugins/*.js is packaged into the image
+plugin-devel
+
+# Python test harness and virtualenv
+tests
+venv
+**/__pycache__
+
+# Documentation, examples, and assets are not needed to build the daemon
+*.md
+examples
+images
+tools
+
+# Go test files are not compiled into the binary
+**/*_test.go

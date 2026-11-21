@@ -173,7 +173,11 @@ The daemon still cannot prove exactly what every command inside a workspace did.
 
 #### Running in Docker Container
 
-**Note:** Container-in-container setups are not yet supported.
+**Note:** The daemon can run in a container when it drives a runtime that lives
+outside that container. The Kubernetes plugin is a `kubectl` client, so it works
+this way: build the included `Dockerfile` and see
+[OCI-CONTAINER-SETUP.md](OCI-CONTAINER-SETUP.md#running-the-daemon-in-a-container-kubernetes-plugin).
+Docker-in-Docker for the docker/podman plugins is still not supported.
 
 To run a local workspace and inspect it:
 
