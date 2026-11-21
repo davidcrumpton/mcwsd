@@ -65,14 +65,13 @@ Design notes:
    exists (public, `main`, `Formula/` seeded with a `.gitkeep`).
 2. ✅ **Scoop bucket repo** — [davidcrumpton/scoop-bucket](https://github.com/davidcrumpton/scoop-bucket)
    exists (public, `main`, `bucket/` seeded with a `.gitkeep`).
-3. ⬜ **`TAP_GITHUB_TOKEN` secret** — *still required.* Create a fine-grained PAT
-   scoped to those two repositories with **Contents: read and write**, then add
-   it at
-   <https://github.com/davidcrumpton/mcwsd/settings/secrets/actions/new>
-   with the name `TAP_GITHUB_TOKEN`. The workflow's built-in `GITHUB_TOKEN`
-   cannot push to a different repository, which is why a PAT is needed. Until
-   this exists, `goreleaser` aborts at the `homebrew formula` step — after the
-   archives and packages are built, but before the release is published.
+3. ✅ **`TAP_GITHUB_TOKEN` secret** — set on `davidcrumpton/mcwsd`. It is a
+   classic PAT with `repo` + `workflow` scopes, which also grants contents
+   write on both tap repositories. The workflow's built-in `GITHUB_TOKEN`
+   cannot push to a different repository, which is why a PAT is needed.
+   Rotate it at <https://github.com/settings/tokens> and re-run
+   <https://github.com/davidcrumpton/mcwsd/settings/secrets/actions> if it
+   expires; a release fails at the `homebrew formula` step if it does.
 4. ⬜ *(Optional)* branch protection on `main`, requiring the `CI` workflow.
 
 The seeded `.gitkeep` files only exist because git cannot track an empty
