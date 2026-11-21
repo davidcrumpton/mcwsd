@@ -238,11 +238,13 @@ brews:
       (share/"mcwsd/plugins").install Dir["plugins/*.js"]
     caveats: |-
       Runtime plugins are installed in:
-        #{share}/mcwsd/plugins
+        #{opt_share}/mcwsd/plugins
+
+      That path is stable across upgrades (it goes through opt/), unlike the
+      versioned Cellar directory.
 
       Start the daemon with one of them, for example:
-        mcwsd daemon --plugin #{share}/mcwsd/plugins/docker.js \
-          --workspace-auth-mode=scoped --port 9080
+        mcwsd daemon --plugin #{opt_share}/mcwsd/plugins/docker.js --workspace-auth-mode=scoped --port 9080
 
       A token for clients is generated with:
         mcwsd token

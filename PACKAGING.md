@@ -61,15 +61,23 @@ Design notes:
 
 ## One-time setup
 
-1. **Homebrew tap repo** — create `davidcrumpton/homebrew-tap` (public, with a
-   `main` branch and a `Formula/` directory; an initial README is enough).
-2. **Scoop bucket repo** — create `davidcrumpton/scoop-bucket` (public, `main`,
-   `bucket/` directory).
-3. **`TAP_GITHUB_TOKEN` secret** — a fine-grained PAT with
-   *Contents: read and write* on both repositories, stored as a repository
-   secret on `davidcrumpton/mcwsd`. The workflow's built-in `GITHUB_TOKEN`
-   cannot push to a different repository, which is why a PAT is needed.
-4. *(Optional)* branch protection on `main`, requiring the `CI` workflow.
+1. ✅ **Homebrew tap repo** — [davidcrumpton/homebrew-tap](https://github.com/davidcrumpton/homebrew-tap)
+   exists (public, `main`, `Formula/` seeded with a `.gitkeep`).
+2. ✅ **Scoop bucket repo** — [davidcrumpton/scoop-bucket](https://github.com/davidcrumpton/scoop-bucket)
+   exists (public, `main`, `bucket/` seeded with a `.gitkeep`).
+3. ⬜ **`TAP_GITHUB_TOKEN` secret** — *still required.* Create a fine-grained PAT
+   scoped to those two repositories with **Contents: read and write**, then add
+   it at
+   <https://github.com/davidcrumpton/mcwsd/settings/secrets/actions/new>
+   with the name `TAP_GITHUB_TOKEN`. The workflow's built-in `GITHUB_TOKEN`
+   cannot push to a different repository, which is why a PAT is needed. Until
+   this exists, `goreleaser` aborts at the `homebrew formula` step — after the
+   archives and packages are built, but before the release is published.
+4. ⬜ *(Optional)* branch protection on `main`, requiring the `CI` workflow.
+
+The seeded `.gitkeep` files only exist because git cannot track an empty
+directory; GoReleaser writes real files next to them (`Formula/mcwsd.rb`,
+`bucket/mcwsd.json`).
 
 ## Cutting a release
 
@@ -113,7 +121,7 @@ gh attestation verify mcwsd_0.5.6_linux_amd64.deb --repo davidcrumpton/mcwsd
 ```sh
 # Homebrew (macOS, Linuxbrew)
 brew install davidcrumpton/tap/mcwsd
-mcwsd daemon --plugin "$(brew --prefix)/share/mcwsd/plugins/docker.js" \
+mcwsd daemon --plugin "$(brew --prefix)/opt/mcwsd/share/mcwsd/plugins/docker.js" \
   --workspace-auth-mode=scoped --port 9080
 
 # Debian / Ubuntu
@@ -170,6 +178,17 @@ The `container` job builds the existing `Dockerfile` for `linux/amd64` and
 
 ## Troubleshooting
 
+* **`Refusing to load formula ... from untrusted tap`** — Homebrew 7 requires
+  third-party taps to be trusted before it will load anything from them. Either
+  trust the tap or install with an explicit override:
+
+  ```sh
+  brew trust davidcrumpton/tap      # once
+  brew install davidcrumpton/tap/mcwsd
+  ```
+
+  The formula itself is unchanged; this is a Homebrew-side policy, and the same
+  prompt appears for any tap outside `Homebrew/*`.
 * **`mcwsd version` shows the old number** — the binary was built without
   `-X main.Version=...`; `make build` and goreleaser both do this, plain
   `go build` does not.

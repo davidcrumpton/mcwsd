@@ -48,7 +48,8 @@ mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --wor
 Prebuilt packages are published on the [releases page](https://github.com/davidcrumpton/mcwsd/releases); every artifact is checksummed, signed with cosign and carries a build provenance attestation. See [PACKAGING.md](PACKAGING.md) for the full channel list and verification steps.
 
 ```bash
-# macOS / Linuxbrew
+# macOS / Linuxbrew (Homebrew 7 asks you to trust third-party taps first)
+brew trust davidcrumpton/tap
 brew install davidcrumpton/tap/mcwsd
 
 # Debian / Ubuntu
@@ -75,10 +76,10 @@ sudo -e /etc/mcwsd/mcwsd.env      # set MCWSD_TOKEN=...
 sudo systemctl enable --now mcwsd
 ```
 
-With Homebrew the plugins land in `$(brew --prefix)/share/mcwsd/plugins` and there is no unit file:
+With Homebrew the plugins land in `$(brew --prefix)/opt/mcwsd/share/mcwsd/plugins` (stable across upgrades) and there is no unit file:
 
 ```bash
-mcwsd daemon --plugin "$(brew --prefix)/share/mcwsd/plugins/docker.js" \
+mcwsd daemon --plugin "$(brew --prefix)/opt/mcwsd/share/mcwsd/plugins/docker.js" \
   --workspace-auth-mode=scoped --port 9080
 ```
 
