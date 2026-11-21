@@ -67,6 +67,27 @@ These flags apply to the process at large.
 - Default: `~/audit.jsonl`
 - Output path for the audit log when audit logging is enabled.
 
+### `--audit-max-bytes`
+
+- Type: int (bytes)
+- Default: `10485760` (10 MiB)
+- Size at which the audit log rotates. Before writing a record that would push
+  the active file past this size, the daemon renames it to `<audit-file>.1`,
+  shifts the numbered backups down, and opens a fresh active file. Records are
+  never split across files, and the size of an existing log is re-read at
+  startup so restarts keep enforcing the limit. Non-positive values fall back to
+  the default.
+
+### `--audit-keep`
+
+- Type: int
+- Default: `7`
+- Number of rotated audit files retained (`<audit-file>.1` … `<audit-file>.7`).
+  The oldest file is deleted on each rotation, so the audit trail cannot grow
+  without bound; at the defaults it tops out at roughly 80 MiB. The minimum is
+  `1` (active file plus one rotated file); the daemon rejects `0` and negative
+  values instead of running without rotation.
+
 ### `--workspace-auth-mode`
 
 - Type: string

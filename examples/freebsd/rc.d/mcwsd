@@ -99,6 +99,8 @@ load_rc_config $name
 : ${mcwsd_audit_file:="/var/log/mcwsd-audit.jsonl"}
 : ${mcwsd_forgejo_api_base:=""}
 : ${mcwsd_audit:="YES"}
+: ${mcwsd_audit_max_bytes:="10485760"}
+: ${mcwsd_audit_keep:="7"}
 
 # Required secrets - set these in /etc/rc.conf (or better, in a
 # protected file sourced by rc.conf) if not already in the environment:
@@ -270,6 +272,8 @@ fi
 if checkyesno mcwsd_audit; then
     command_args="${command_args} --audit"
     command_args="${command_args} --audit-file=${mcwsd_audit_file}"
+    command_args="${command_args} --audit-max-bytes=${mcwsd_audit_max_bytes}"
+    command_args="${command_args} --audit-keep=${mcwsd_audit_keep}"
 fi
 
 if checkyesno mcwsd_debug; then

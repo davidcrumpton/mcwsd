@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/davidcrumpton/mcwsd/internal"
 )
 
 func TestCurrentUserHomeDirIgnoresHOMEEnvironment(t *testing.T) {
@@ -90,5 +93,65 @@ func TestTokenCmdRejectsArguments(t *testing.T) {
 	cmd.SetArgs([]string{"extra"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error for unexpected argument")
+	}
+}
+
+// TestAuditFlagsDefaultRetention pins the operator-facing defaults: rotate at
+// 10 MiB and keep no more than 7 rotated files.
+func TestAuditFlagsDefaultRetention(t *testing.T) {
+	var cfg auditFlags
+	cmd := newDaemonCmd()
+	registerAuditFlags(cmd, &cfg)
+
+	want := map[string]string{
+		"audit-keep":      strconv.Itoa(internal.DefaultAuditKeep),
+		"audit-max-bytes": strconv.FormatInt(internal.DefaultAuditMaxBytes, 10),
+	}
+	for name, defValue := range want {
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("flag --%s is not registered on the daemon command", name)
+		}
+		if flag.DefValue != defValue {
+			t.Errorf("--%s default = %q, want %q", name, flag.DefValue, defValue)
+		}
+	}
+	if internal.DefaultAuditKeep != 7 {
+		t.Errorf("internal.DefaultAuditKeep = %d, want 7", internal.DefaultAuditKeep)
+	}
+
+	if err := cmd.Flags().Parse([]string{
+		"--audit", "--audit-file", "/tmp/audit.jsonl",
+		"--audit-max-bytes", "2048", "--audit-keep", "2",
+	}); err != nil {
+		t.Fatalf("parse audit flags: %v", err)
+	}
+	if !cfg.enabled {
+		t.Error("--audit did not enable audit logging")
+	}
+	if cfg.file != "/tmp/audit.jsonl" {
+		t.Errorf("audit file = %q, want /tmp/audit.jsonl", cfg.file)
+	}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	opts := cfg.options()
+	if opts.Path != "/tmp/audit.jsonl" || opts.MaxBytes != 2048 || opts.Keep != 2 {
+		t.Errorf("options() = %+v, want path=/tmp/audit.jsonl max=2048 keep=2", opts)
+	}
+}
+
+func TestAuditFlagsRejectUnboundedRetention(t *testing.T) {
+	if err := (auditFlags{maxBytes: -1}).validate(); err == nil {
+		t.Error("expected error for negative --audit-max-bytes")
+	} else if !strings.Contains(err.Error(), "--audit-max-bytes") {
+		t.Errorf("error = %v, want it to name --audit-max-bytes", err)
+	}
+	for _, keep := range []int{0, -1} {
+		if err := (auditFlags{keep: keep}).validate(); err == nil {
+			t.Errorf("expected error for --audit-keep=%d", keep)
+		} else if !strings.Contains(err.Error(), "--audit-keep") {
+			t.Errorf("error = %v, want it to name --audit-keep", err)
+		}
 	}
 }

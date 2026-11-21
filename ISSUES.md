@@ -103,6 +103,8 @@ The audit logging path file doesn't rotate and it should. The audit log file sho
 
 **Proposed fix:** Add size- and time-based log rotation, with retention or archival rules and startup validation for the configured audit log path.
 
+**Status:** Size-based rotation with bounded retention is implemented: the daemon rotates the audit log at `--audit-max-bytes` (default 10 MiB) and keeps at most `--audit-keep` rotated files (default 7), deleting the oldest first. Time-based rotation and external archival are still open.
+
 ### FreeBSD Network Safety
 
 The daemon disconnects networks when a task is done so a process can't communicate with the outside world after completion.  This doesn't work on OpenBSD with vmd(8) and FreeBSD uses ifconfig which the daemon cannot control.  Alternate methods for network management need to be explored such as pfctl, ipfw, or ifconfig down on the host TAP side of the interface (OpenBSD) or FreeBSD host epair interface side.

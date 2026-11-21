@@ -32,7 +32,7 @@ import (
 
 var (
 	ApplicationName = "mcwsd"
-	Version         = "0.5.002"
+	Version         = "0.5.006"
 )
 
 // Script plugins are the future of the runtime layer: one goja-backed .js
@@ -90,10 +90,51 @@ func defaultAuditFile() string {
 	return filepath.Join(homeDir, "audit.jsonl")
 }
 
+// auditFlags holds the audit logging flags. They live on the daemon command
+// because only the daemon serves audited requests.
+type auditFlags struct {
+	enabled  bool
+	file     string
+	maxBytes int64
+	keep     int
+}
+
+// registerAuditFlags binds the audit flags to cmd, defaulting rotation to
+// internal.DefaultAuditMaxBytes per file and internal.DefaultAuditKeep
+// retained files.
+func registerAuditFlags(cmd *cobra.Command, cfg *auditFlags) {
+	f := cmd.Flags()
+	f.BoolVar(&cfg.enabled, "audit", false,
+		"Enable structured JSON audit logging (default off)")
+	f.StringVar(&cfg.file, "audit-file", defaultAuditFile(),
+		"Audit log destination (default: ~/audit.jsonl)")
+	f.Int64Var(&cfg.maxBytes, "audit-max-bytes", internal.DefaultAuditMaxBytes,
+		"Rotate the audit log once a record would push it past this many bytes (0 falls back to the default)")
+	f.IntVar(&cfg.keep, "audit-keep", internal.DefaultAuditKeep,
+		"Number of rotated audit log files to retain, oldest deleted first (minimum 1)")
+}
+
+// validate rejects nonsensical rotation settings (a negative size limit or a
+// retention limit below one file) instead of silently falling back to the
+// defaults.
+func (c auditFlags) validate() error {
+	if c.maxBytes < 0 {
+		return fmt.Errorf("--audit-max-bytes must be >= 0, got %d", c.maxBytes)
+	}
+	if c.keep < 1 {
+		return fmt.Errorf("--audit-keep must be >= 1, got %d", c.keep)
+	}
+	return nil
+}
+
+// options converts the parsed flags into logger configuration.
+func (c auditFlags) options() internal.AuditOptions {
+	return internal.AuditOptions{Path: c.file, MaxBytes: c.maxBytes, Keep: c.keep}
+}
+
 func main() {
 	var debug bool
-	var audit bool
-	var auditFile string
+	var auditCfg auditFlags
 	// Error and exit if running as root
 	if isRoot() {
 		internal.Log.Error("ERROR: This program is not designed to run as root.\n")
@@ -108,21 +149,22 @@ func main() {
 		// --debug is a single on/off switch (no levels) applied once, before
 		// any subcommand runs, so every provisioner's [DEBUG] output is either
 		// present or absent for the whole process.
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			internal.Log.SetDebug(debug)
 			if cmd == daemonCmd {
-				internal.Log.SetAudit(audit, auditFile)
+				if err := auditCfg.validate(); err != nil {
+					return err
+				}
+				internal.Log.SetAuditConfig(auditCfg.enabled, auditCfg.options())
 			}
 			internal.Log.Debug("command_start", "command", cmd.CommandPath())
+			return nil
 		},
 	}
 
 	root.PersistentFlags().BoolVar(&debug, "debug", false,
 		"Enable verbose DEBUG logging (default off)")
-	daemonCmd.Flags().BoolVar(&audit, "audit", false,
-		"Enable structured JSON audit logging (default off)")
-	daemonCmd.Flags().StringVar(&auditFile, "audit-file", defaultAuditFile(),
-		"Audit log destination (default: ~/audit.jsonl)")
+	registerAuditFlags(daemonCmd, &auditCfg)
 
 	root.AddCommand(
 		daemonCmd,

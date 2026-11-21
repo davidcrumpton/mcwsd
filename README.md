@@ -167,6 +167,16 @@ By default, this writes JSONL records to `~/audit.jsonl` in the daemon user's ho
 mcwsd daemon --workspace-auth-mode=strict --audit --audit-file /var/lib/wsd/audit.jsonl
 ```
 
+The audit log rotates by size so an unattended daemon cannot fill the disk. When the next record would push the active file past `--audit-max-bytes` (default 10 MiB), the daemon renames it to `<audit-file>.1`, shifts the older files down, and deletes anything beyond `--audit-keep` rotated files (default 7):
+
+```bash
+mcwsd daemon --workspace-auth-mode=strict --audit \
+  --audit-file /var/lib/wsd/audit.jsonl \
+  --audit-max-bytes 10485760 --audit-keep 7
+```
+
+Rotation is evaluated per record, so a record is never split across two files, and the size of an existing log is re-read at startup, so restarts keep enforcing the limit. At the defaults the trail is bounded at about 80 MiB (`audit.jsonl` plus `audit.jsonl.1` … `audit.jsonl.7`); `--audit-keep 1` keeps the tightest history (active file plus one rotated file) and the daemon refuses `--audit-keep 0` rather than run without rotation.
+
 The audit facility writes one JSON object per line containing the request lifecycle, outcome, workspace identifier, authenticated caller, and correlation ID. Secret-bearing keys such as `Authorization`, `token`, `password`, and `api_key` are redacted before writing. Audit logs are intended for daemon-level operator evidence and are not a guarantee of complete in-sandbox visibility.
 
 The daemon still cannot prove exactly what every command inside a workspace did. A workspace token identifies the workspace it is authorized for, not a specific user or AI client inside it. For that reason, audit records should be treated as durable operational evidence for API requests only, not as a definitive record of everything executed by code running in the sandbox.
