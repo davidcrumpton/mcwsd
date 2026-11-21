@@ -86,13 +86,22 @@ limit=${4:-0}
 mkdir -p "$jobdir" 2>/dev/null
 : > "$jobdir/stdout"
 : > "$jobdir/stderr"
-rm -f "$jobdir/exit_code" "$jobdir/status" "$jobdir/pid" "$jobdir/pgid" "$jobdir/shim" "$jobdir/out.fifo" "$jobdir/err.fifo" 2>/dev/null
+rm -f "$jobdir/exit_code" "$jobdir/status" "$jobdir/pid" "$jobdir/pgid" "$jobdir/shim" "$jobdir/out.fifo" "$jobdir/err.fifo" "$jobdir"/.*.tmp 2>/dev/null
+
+# put writes a state file atomically. A probe may read these files at any
+# moment, and a plain "> file" truncates first: a reader landing in that
+# window sees an empty file, which for the pid files means "no process" and
+# for exit_code means "exit code 0". Writing to a temp file and renaming
+# makes each file appear only once it is complete.
+put () {
+    printf '%s\n' "$2" > "$jobdir/.$1.tmp" && mv -f "$jobdir/.$1.tmp" "$jobdir/$1"
+}
 
 # The supervisor's own PID is written first so a probe can tell "still
 # supervising" from "supervisor died without recording an exit code". Using
 # the supervisor (not the child) for liveness closes the race where the child
 # is momentarily dead before the exit code is written.
-echo "$$" > "$jobdir/shim"
+put shim "$$"
 
 outfifo="$jobdir/out.fifo"
 errfifo="$jobdir/err.fifo"
@@ -127,17 +136,17 @@ fi
 
 sh -c "$cmd" </dev/null > "$outfifo" 2> "$errfifo" &
 child=$!
-echo "$child" > "$jobdir/pid"
+put pid "$child"
 if [ "$detached" = "1" ]; then
     # The supervisor is the session leader, so its own PID is the group ID.
-    echo "$$" > "$jobdir/pgid"
+    put pgid "$$"
 else
     # Record the child's group only if job control actually made it a group
     # leader. If it shares our group, record nothing and fall back to a plain
     # pid kill rather than risk signalling an unrelated process group.
     childpgid=$(ps -o pgid= -p "$child" 2>/dev/null | tr -d ' ')
     if [ -n "$childpgid" ] && [ "$childpgid" = "$child" ]; then
-        echo "$childpgid" > "$jobdir/pgid"
+        put pgid "$childpgid"
     fi
 fi
 
@@ -156,11 +165,11 @@ kill "$watchdog" 2>/dev/null
 wait "$watchdog" 2>/dev/null
 rm -f "$outfifo" "$errfifo"
 
-echo "$rc" > "$jobdir/exit_code"
+put exit_code "$rc"
 if [ "$rc" -eq 0 ]; then
-    echo succeeded > "$jobdir/status"
+    put status succeeded
 else
-    echo failed > "$jobdir/status"
+    put status failed
 fi
 `
 
@@ -391,13 +400,31 @@ const (
 // source of truth for completion: the presence of "exit_code" means the job is
 // done; otherwise a live pid means running, a dead pid means gone, and the
 // absence of a pid file means the job has not started yet.
+//
+// "unknown" is reported when the shim pid cannot be parsed. That happens if the
+// probe lands in the window where the supervisor is creating the pid file, and
+// it must not be read as "gone": concluding a healthy job died is a false
+// failure, while waiting one more poll costs nothing.
 func (b *Backend) probeProcess(ctx context.Context, wsState *workspaceState, jobDir string) (processState, int, error) {
 	script := fmt.Sprintf(
 		`d=%s
 if [ -f "$d/exit_code" ]; then
   printf 'done %%s\n' "$(cat "$d/exit_code" 2>/dev/null)"
 elif [ -f "$d/shim" ]; then
-  if kill -0 "$(cat "$d/shim" 2>/dev/null)" 2>/dev/null; then printf 'running\n'; else printf 'gone\n'; fi
+  spid=$(cat "$d/shim" 2>/dev/null)
+  case "$spid" in
+  ''|*[!0-9]*)
+    printf 'unknown\n' ;;
+  *)
+    # kill -0 fails for both "no such process" and "not permitted to signal
+    # it" (a probe may run as a different user than the supervisor), so fall
+    # back to ps to tell a live process from a dead one.
+    if kill -0 "$spid" 2>/dev/null || ps -p "$spid" >/dev/null 2>&1; then
+      printf 'running\n'
+    else
+      printf 'gone\n'
+    fi ;;
+  esac
 else
   printf 'starting\n'
 fi`, shellQuote(jobDir))
@@ -427,6 +454,10 @@ fi`, shellQuote(jobDir))
 		}
 		return processStateDone, code, nil
 	case "running":
+		return processStateRunning, 0, nil
+	case "unknown":
+		// Pid file exists but is not readable yet; treat as running rather
+		// than gone so a mid-write probe cannot fail a healthy job.
 		return processStateRunning, 0, nil
 	case "gone":
 		return processStateGone, 0, nil

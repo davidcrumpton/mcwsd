@@ -589,11 +589,16 @@ func TestSupervisorScriptIsPosixAndRecordsState(t *testing.T) {
 		"#!/bin/sh",
 		`"$jobdir/stdout"`,
 		`"$jobdir/stderr"`,
-		`"$jobdir/pid"`,
-		`"$jobdir/exit_code"`,
-		`"$jobdir/status"`,
-		`"$jobdir/pgid"`,
-		`"$jobdir/shim"`,
+		// State files are written through put(), which renames a temp file
+		// into place so a concurrent probe never sees a half-written file.
+		`"$jobdir/.$1.tmp"`,
+		`"$jobdir/$1"`,
+		`put shim "$$"`,
+		`put pid "$child"`,
+		`put pgid`,
+		`put exit_code "$rc"`,
+		`put status succeeded`,
+		`put status failed`,
 		"mkfifo",
 		"out.fifo",
 		"err.fifo",
@@ -608,6 +613,72 @@ func TestSupervisorScriptIsPosixAndRecordsState(t *testing.T) {
 		if strings.Contains(jobSupervisorScript, bad) {
 			t.Errorf("supervisor script uses non-POSIX construct %q", bad)
 		}
+	}
+}
+
+// A probe that lands while the supervisor is creating its pid file must not
+// conclude the job died. Reading an empty pid made `kill -0 ""` fail, which
+// reported "gone" and marked a healthy job failed — the flake that failed
+// TestBackgroundJobLifecycle on CI.
+func TestProbeTreatsUnreadableShimPidAsRunning(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "partial", content: "\n"},
+		{name: "garbage", content: "not-a-pid\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, _ := newJobTestBackend(t)
+			ft := b.workspaces["ws-test"].handle.Transport.(*localTransport)
+			jobDir := filepath.Join(ft.root, "proc-shim-"+tc.name)
+			if err := os.MkdirAll(jobDir, 0o755); err != nil {
+				t.Fatalf("mkdir job dir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(jobDir, "shim"), []byte(tc.content), 0o644); err != nil {
+				t.Fatalf("write shim: %v", err)
+			}
+
+			state, _, err := b.probeProcess(context.Background(), b.workspaces["ws-test"], jobDir)
+			if err != nil {
+				t.Fatalf("probeProcess: %v", err)
+			}
+			if state == processStateGone {
+				t.Fatal("probe reported gone for an unreadable pid; a healthy job would be marked failed")
+			}
+			if state != processStateRunning {
+				t.Fatalf("state = %v, want running", state)
+			}
+		})
+	}
+}
+
+// A pid file naming a process that no longer exists must still be reported as
+// gone, so a supervisor killed from outside is not waited on forever.
+func TestProbeReportsGoneForDeadPid(t *testing.T) {
+	b, _ := newJobTestBackend(t)
+	ft := b.workspaces["ws-test"].handle.Transport.(*localTransport)
+	jobDir := filepath.Join(ft.root, "proc-dead-pid")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatalf("mkdir job dir: %v", err)
+	}
+	// Spawn and reap a process so its pid is definitely not in use.
+	cmd := exec.Command("sh", "-c", "exit 0")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("spawn helper: %v", err)
+	}
+	deadPid := cmd.Process.Pid
+	if err := os.WriteFile(filepath.Join(jobDir, "shim"), []byte(fmt.Sprintf("%d\n", deadPid)), 0o644); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+
+	state, _, err := b.probeProcess(context.Background(), b.workspaces["ws-test"], jobDir)
+	if err != nil {
+		t.Fatalf("probeProcess: %v", err)
+	}
+	if state != processStateGone {
+		t.Fatalf("state = %v, want gone", state)
 	}
 }
 
