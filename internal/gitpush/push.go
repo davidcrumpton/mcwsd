@@ -362,7 +362,7 @@ func GitEnv(cfg Config) []string {
 		var sshCmdBuilder strings.Builder
 		sshCmdBuilder.WriteString("ssh")
 		if cfg.SSHKeyPath != "" {
-			sshCmdBuilder.WriteString(fmt.Sprintf(" -i %s -o IdentitiesOnly=yes", cfg.SSHKeyPath))
+			fmt.Fprintf(&sshCmdBuilder, " -i %s -o IdentitiesOnly=yes", cfg.SSHKeyPath)
 		}
 		sshCmdBuilder.WriteString(" -o StrictHostKeyChecking=yes")
 		// Only pin a known_hosts file when one is configured. An empty path
@@ -370,7 +370,7 @@ func GitEnv(cfg Config) []string {
 		// `-o UserKnownHostsFile=` with no argument makes ssh abort with
 		// `no argument after keyword "userknownhostsfile"`.
 		if cfg.SSHKnownHostsPath != "" {
-			sshCmdBuilder.WriteString(fmt.Sprintf(" -o UserKnownHostsFile=%s", cfg.SSHKnownHostsPath))
+			fmt.Fprintf(&sshCmdBuilder, " -o UserKnownHostsFile=%s", cfg.SSHKnownHostsPath)
 		}
 		sshCmdBuilder.WriteString(" -o BatchMode=yes")
 

@@ -49,7 +49,12 @@ func (b *Broker) Grant(ctx context.Context, workspaceID string, secretRef string
 	if ttl > 0 {
 		entry.expiresAt = time.Now().Add(ttl)
 		entry.timer = time.AfterFunc(ttl, func() {
-			b.Revoke(context.Background(), workspaceID, secretRef)
+			// A secret that fails to revoke outlives its TTL, so surface the
+			// error instead of dropping it; there is no caller to return to.
+			if err := b.Revoke(context.Background(), workspaceID, secretRef); err != nil {
+				internal.Log.Error("secret_revoke_failed",
+					"workspace_id", workspaceID, "secret_ref", secretRef, "error", err)
+			}
 		})
 	}
 

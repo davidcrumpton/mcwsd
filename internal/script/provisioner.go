@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/davidcrumpton/mcwsd/internal"
@@ -344,12 +343,4 @@ func ctxDone(ctx context.Context) <-chan struct{} {
 		ctx = context.Background()
 	}
 	return ctx.Done()
-}
-
-// exported for tests.
-func (p *Provisioner) optionString(name string) string {
-	if v, ok := p.options[name].(string); ok {
-		return strings.TrimSpace(v)
-	}
-	return ""
 }

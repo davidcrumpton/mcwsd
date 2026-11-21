@@ -1,0 +1,38 @@
+# golangci-lint configuration.
+#
+# Adopted after the codebase was already written, so the first iteration keeps
+# the standard linter set and excludes the one class of findings that is
+# genuinely not actionable: unchecked errors from Close/Remove/Print and
+# friends, where the only response would be to log and continue.
+#
+# Real findings were fixed rather than excluded when this was added:
+#   * ineffassign in internal/forge/forgejo (dead endpoint assignment)
+#   * two unused functions (Provisioner.optionString, pluginFileName)
+#   * staticcheck QF1012 / SA9003
+#   * a client bug where Artifacts() accepted paths and never sent them
+#
+# Ratchet up later by removing the preset and fixing what it reports.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  exclusions:
+    presets:
+      # Unchecked errors on Close/Remove/Print: the canonical
+      # "std-error-handling" set from golangci-lint itself.
+      - std-error-handling
+    rules:
+      # Test helpers routinely ignore these; the assertions that matter are
+      # the t.Fatalf calls, not the cleanup errors.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

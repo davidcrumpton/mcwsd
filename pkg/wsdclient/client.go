@@ -183,13 +183,21 @@ type ArtifactsResponse struct {
 }
 
 // Artifacts retrieves artifacts (diffs and new files) from a workspace.
+//
+// paths, when non-empty, restricts the result to those workspace-relative
+// paths; it is sent as repeated ?paths= query parameters, which is what the
+// daemon's handler reads.
 func (c *Client) Artifacts(ctx context.Context, workspaceID string, paths []string) (*ArtifactsResponse, error) {
-	// url := fmt.Sprintf("%s/workspaces/%s/artifacts", c.baseURL, workspaceID)
+	path := fmt.Sprintf("/workspaces/%s/artifacts", workspaceID)
 	if len(paths) > 0 {
-		// Add query params if paths specified
+		q := url.Values{}
+		for _, p := range paths {
+			q.Add("paths", p)
+		}
+		path += "?" + q.Encode()
 	}
 
-	resp, err := c.doWorkspaceRequest(ctx, "GET", workspaceID, fmt.Sprintf("/workspaces/%s/artifacts", workspaceID), nil)
+	resp, err := c.doWorkspaceRequest(ctx, "GET", workspaceID, path, nil)
 	if err != nil {
 		return nil, err
 	}

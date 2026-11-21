@@ -55,7 +55,10 @@ func (f *Forge) OpenMergeRequest(ctx context.Context, req forge.OpenMRRequest) (
 	if err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("%s/repos/%s/pulls", strings.TrimRight(f.APIBase, "/"), strings.TrimPrefix(projectPath, "/"))
+	// Forgejo/Gitea expose the API under /api/v1. Accept an APIBase that
+	// already includes it (some configs point straight at .../api/v1) and
+	// add it otherwise.
+	var endpoint string
 	if strings.Contains(f.APIBase, "/api/v1") {
 		endpoint = fmt.Sprintf("%s/repos/%s/pulls", strings.TrimRight(f.APIBase, "/"), strings.TrimPrefix(projectPath, "/"))
 	} else {

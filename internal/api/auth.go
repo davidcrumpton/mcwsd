@@ -55,7 +55,8 @@ type tokenAuthority struct {
 
 func newTokenAuthority(adminToken string) *tokenAuthority {
 	mac := hmac.New(sha256.New, []byte(adminToken))
-	io.WriteString(mac, "mcwsd/workspace-token/v1")
+	// hash.Hash.Write never returns an error; the signature only satisfies io.Writer.
+	_, _ = io.WriteString(mac, "mcwsd/workspace-token/v1")
 	return &tokenAuthority{admin: adminToken, key: mac.Sum(nil)}
 }
 
@@ -72,7 +73,7 @@ func (a *tokenAuthority) isAdmin(token string) bool {
 
 func (a *tokenAuthority) workspaceToken(workspaceID string) string {
 	mac := hmac.New(sha256.New, a.key)
-	io.WriteString(mac, workspaceID)
+	_, _ = io.WriteString(mac, workspaceID) // never fails, see newTokenAuthority
 	return workspaceTokenPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 

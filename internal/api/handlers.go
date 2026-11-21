@@ -283,7 +283,7 @@ func (s *Server) handlePrepare(w http.ResponseWriter, r *http.Request) {
 	if result.JobID != "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(PrepareResponse{
+		writeJSON(w, PrepareResponse{
 			WorkspaceID:    result.WorkspaceID,
 			WorkspaceToken: s.workspaceToken(result.WorkspaceID),
 			JobID:          result.JobID,
@@ -303,7 +303,7 @@ func (s *Server) handlePrepare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // WorkspaceTokenResponse is the response for POST /workspaces/{id}/token.
@@ -322,7 +322,7 @@ func (s *Server) handleWorkspaceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(WorkspaceTokenResponse{
+	writeJSON(w, WorkspaceTokenResponse{
 		WorkspaceID:    id,
 		WorkspaceToken: s.workspaceToken(id),
 	})
@@ -395,7 +395,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // ArtifactsResponse is the response for GET /workspaces/{id}/artifacts.
@@ -407,6 +407,15 @@ type ArtifactInfo struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Content string `json:"content,omitempty"`
+}
+
+// writeJSON encodes v as the response body. Status and headers must already be
+// set. A failure here cannot be turned into a different response — the client
+// is most likely gone — so it is logged rather than silently dropped.
+func writeJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		internal.Log.Error("response_encode_failed", "error", err)
+	}
 }
 
 func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +442,7 @@ func (s *Server) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 type SafeEditRequest struct {
@@ -470,7 +479,7 @@ func (s *Server) handleSafeEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // CommitAndPRRequest is the body for POST /workspaces/{id}/commit-and-pr.
@@ -531,7 +540,7 @@ func (s *Server) handleCommitAndPR(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 func (s *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
@@ -569,7 +578,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // LeftoverInfo describes one tracked container that a previous daemon run
@@ -613,7 +622,7 @@ func (s *Server) handleLeftovers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // --- File System Tool Handlers ---
@@ -644,7 +653,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		resp.Entries = []internal.FileEntry{}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 // ReadFileResponse is the response for GET /workspaces/{id}/file.
@@ -669,7 +678,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ReadFileResponse{Content: result.Content})
+	writeJSON(w, ReadFileResponse{Content: result.Content})
 }
 
 // WriteFileRequest is the body for PUT /workspaces/{id}/file.
@@ -747,7 +756,7 @@ func (s *Server) handleStartProcess(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(StartProcessResponse{
+	writeJSON(w, StartProcessResponse{
 		JobID:   info.ID,
 		ID:      info.ID,
 		Command: info.Command,
@@ -795,7 +804,7 @@ func (s *Server) handleListProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ListProcessesResponse{Jobs: infos, Processes: infos})
+	writeJSON(w, ListProcessesResponse{Jobs: infos, Processes: infos})
 }
 
 // ProcessStatusResponse is the response for GET /workspaces/{id}/processes/{pid}.
@@ -831,7 +840,7 @@ func (s *Server) handleGetProcessStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ProcessStatusResponse{
+	writeJSON(w, ProcessStatusResponse{
 		ProcessInfo: ProcessInfo{
 			JobID:    result.ID,
 			ID:       result.ID,

@@ -13,8 +13,6 @@ package script
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/dop251/goja"
@@ -244,8 +242,4 @@ func optionalFunction(obj *goja.Object, name string) (goja.Callable, bool) {
 	}
 	fn, ok := goja.AssertFunction(v)
 	return fn, ok
-}
-
-func pluginFileName(path string) string {
-	return filepath.Base(strings.TrimSuffix(path, ".js"))
 }
