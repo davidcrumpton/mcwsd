@@ -1,0 +1,52 @@
+[Unit]
+Description=mcwsd workspace daemon
+Documentation=https://github.com/davidcrumpton/mcwsd
+Documentation=file:///usr/share/doc/mcwsd/README.md
+# The runtime plugin is chosen with --plugin in the ExecStart line below.
+# Plugins that shell out to a container runtime need that runtime to be up:
+#   docker     -> add "docker.service" to Wants=/After=
+#   podman     -> socket activation is not required
+#   kubernetes -> needs a kubeconfig readable by the _wsd user
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=_wsd
+Group=_wsd
+EnvironmentFile=-/etc/mcwsd/mcwsd.env
+WorkingDirectory=/var/lib/mcwsd
+# Paths follow the packaging layout:
+#   binary    /usr/bin/mcwsd
+#   plugins   /usr/share/mcwsd/plugins/*.js
+#   state     /var/lib/mcwsd
+#   audit log /var/log/mcwsd
+# Edit the --plugin argument to pick a runtime, and put secrets (MCWSD_TOKEN,
+# forge tokens, SSH key paths) in /etc/mcwsd/mcwsd.env.
+ExecStart=/usr/bin/mcwsd daemon \
+    --plugin /usr/share/mcwsd/plugins/docker.js \
+    --workspace-auth-mode=strict \
+    --bind-address=127.0.0.1 \
+    --port 9080 \
+    --workspace-base-path /var/lib/mcwsd/workspaces \
+    --cache-dir /var/lib/mcwsd/cache \
+    --state-file /var/lib/mcwsd/state.json \
+    --jobs-file /var/lib/mcwsd/jobs.json \
+    --audit \
+    --audit-file /var/log/mcwsd/audit.jsonl
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+
+# Hardening. Workspaces are written below /var/lib/mcwsd, so that is the only
+# writable tree; drop ProtectSystem if a plugin needs to write elsewhere.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/mcwsd /var/log/mcwsd
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

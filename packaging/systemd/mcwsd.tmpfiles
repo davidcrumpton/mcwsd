@@ -1,0 +1,13 @@
+# Runtime directories for mcwsd. Created by postinstall via
+# `systemd-tmpfiles --create mcwsd.conf` and re-applied on every boot.
+#
+# type path                mode user group age
+d /var/lib/mcwsd            0750 _wsd _wsd  -
+d /var/lib/mcwsd/cache      0750 _wsd _wsd  -
+d /var/lib/mcwsd/workspaces 0750 _wsd _wsd  -
+d /var/log/mcwsd            0750 _wsd _wsd  -
+d /run/mcwsd                0755 _wsd _wsd  -
+
+# The package creates /etc/mcwsd root-owned so that config is not
+# daemon-writable; adjust only the group so _wsd can read the env file.
+m /etc/mcwsd                0750 root _wsd -

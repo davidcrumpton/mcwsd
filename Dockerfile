@@ -30,6 +30,9 @@ FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-${DEBIAN_VERSION} AS build
 
 ARG TARGETOS=linux
 ARG TARGETARCH
+# Stamped into main.Version by the release workflow so that `mcwsd version`
+# inside the image reports the release tag rather than the source default.
+ARG MCWSD_VERSION=dev
 
 WORKDIR /src
 
@@ -42,7 +45,7 @@ COPY internal ./internal
 COPY pkg ./pkg
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/mcwsd ./cmd/mcwsd
+    go build -trimpath -ldflags="-s -w -X main.Version=${MCWSD_VERSION}" -o /out/mcwsd ./cmd/mcwsd
 
 # ---------------------------------------------------------------------------
 # Fetch kubectl for the target architecture, verifying the published checksum

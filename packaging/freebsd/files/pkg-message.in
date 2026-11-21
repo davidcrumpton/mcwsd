@@ -1,0 +1,17 @@
+mcwsd provisions throwaway development workspaces for coding agents (FreeBSD
+jails, Docker, Podman, Kubernetes and more) behind a small HTTP API, with
+dependency caching, capacity gating and automatic pruning.
+
+The runtime backend is chosen per daemon instance with --plugin; the plugins
+shipped by this port live in %%PREFIX%%/share/mcwsd/plugins.
+
+To run it as a service:
+
+  1. Generate a client token:        mcwsd token
+  2. Put it in /usr/local/etc/mcwsd.env as MCWSD_TOKEN=...
+     and lock it down:               chown root:_wsd /usr/local/etc/mcwsd.env
+                                     chmod 0640 /usr/local/etc/mcwsd.env
+  3. Pick a plugin in /etc/rc.conf:  mcwsd_plugin="/usr/local/share/mcwsd/plugins/freebsd-jail.js"
+  4. Enable and start:               sysrc mcwsd_enable=YES && service mcwsd start
+
+See %%PREFIX%%/share/doc/mcwsd/FREEBSD-SETUP.md for the full jail walkthrough.

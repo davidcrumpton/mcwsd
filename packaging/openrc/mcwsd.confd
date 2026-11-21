@@ -1,0 +1,22 @@
+# /etc/conf.d/mcwsd — settings for the OpenRC service in /etc/init.d/mcwsd
+#
+# Runtime plugin to load. One plugin per daemon instance; available plugins:
+#   /usr/share/mcwsd/plugins/docker.js
+#   /usr/share/mcwsd/plugins/podman.js
+#   /usr/share/mcwsd/plugins/kubernetes.js
+#   /usr/share/mcwsd/plugins/apple-container.js
+#   /usr/share/mcwsd/plugins/freebsd-jail.js
+#   /usr/share/mcwsd/plugins/openbsd-vmd.js
+#   /usr/share/mcwsd/plugins/netbsd-account.js
+#   /usr/share/mcwsd/plugins/proxmox-lxc.js
+#   /usr/share/mcwsd/plugins/zones.js
+#MCWSD_PLUGIN="/usr/share/mcwsd/plugins/podman.js"
+
+# Per-workspace authorization mode (required by the daemon).
+#MCWSD_WORKSPACE_AUTH_MODE="strict"
+
+# Listen address and port. Bind to 0.0.0.0 only behind TLS or a proxy.
+#MCWSD_BIND_ADDRESS="127.0.0.1"
+#MCWSD_PORT="9080"
+
+# Secrets are read from /etc/mcwsd/mcwsd.env by the init script.

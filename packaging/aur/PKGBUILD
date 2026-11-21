@@ -1,0 +1,61 @@
+# Maintainer: David Crumpton <azcrumpty@msn.com>
+#
+# AUR package for mcwsd, built from source at the release tag.
+#
+# Publish:
+#   makepkg --printsrcinfo > .SRCINFO
+#   git clone ssh://aur@aur.archlinux.org/mcwsd.git
+#   cp PKGBUILD .SRCINFO mcwsd.git/ && cd mcwsd.git && git add -A && git commit -m "mcwsd 0.5.6" && git push
+#
+# pkgver and sha256sums are refreshed from a published release by
+# packaging/aur/update-aur.sh.
+
+pkgname=mcwsd
+pkgver=0.5.6
+pkgrel=1
+pkgdesc='Workspace daemon for ephemeral coding-agent development environments'
+arch=('x86_64' 'aarch64')
+url='https://github.com/davidcrumpton/mcwsd'
+license=('MIT')
+depends=('glibc')
+makedepends=('go')
+provides=('mcwsd')
+conflicts=('mcwsd-bin')
+backup=('etc/mcwsd/mcwsd.env' 'etc/conf.d/mcwsd')
+options=('!debug')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/v${pkgver}.tar.gz")
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+
+build() {
+	cd "${pkgname}-${pkgver}"
+	export CGO_ENABLED=0
+	export GOFLAGS="-trimpath -mod=mod"
+	go build \
+		-ldflags "-s -w -X main.Version=${pkgver}" \
+		-o mcwsd ./cmd/mcwsd
+}
+
+package() {
+	cd "${pkgname}-${pkgver}"
+
+	install -Dm0755 mcwsd "${pkgdir}/usr/bin/mcwsd"
+
+	install -d "${pkgdir}/usr/share/mcwsd/plugins"
+	install -m0644 plugins/*.js "${pkgdir}/usr/share/mcwsd/plugins/"
+
+	install -Dm0644 "${startdir}/packaging/systemd/mcwsd.service" \
+		"${pkgdir}/usr/lib/systemd/system/mcwsd.service"
+	install -Dm0644 "${startdir}/packaging/systemd/mcwsd.sysusers" \
+		"${pkgdir}/usr/lib/sysusers.d/mcwsd.conf"
+	install -Dm0644 "${startdir}/packaging/systemd/mcwsd.tmpfiles" \
+		"${pkgdir}/usr/lib/tmpfiles.d/mcwsd.conf"
+
+	install -Dm0640 "${startdir}/packaging/systemd/mcwsd.env.example" \
+		"${pkgdir}/etc/mcwsd/mcwsd.env"
+	install -Dm0644 "${startdir}/packaging/openrc/mcwsd.confd" \
+		"${pkgdir}/etc/conf.d/mcwsd"
+
+	install -Dm0644 LICENSE "${pkgdir}/usr/share/licenses/mcwsd/LICENSE"
+	install -Dm0644 README.md "${pkgdir}/usr/share/doc/mcwsd/README.md"
+	install -Dm0644 PLUGINS.md "${pkgdir}/usr/share/doc/mcwsd/PLUGINS.md"
+}

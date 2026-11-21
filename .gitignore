@@ -6,3 +6,6 @@ plugin-devel/dist/
 /mcwsd
 
 __pycache__
+
+# GoReleaser output
+/dist/

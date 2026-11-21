@@ -1,0 +1,332 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# GoReleaser configuration for mcwsd.
+#
+# One tag push produces, from a single build matrix:
+#   * release archives (tar.gz, zip on Windows) with the runtime plugins bundled
+#   * .deb / .rpm / .apk packages with systemd (deb, rpm) or OpenRC (apk) units
+#   * a Homebrew formula in davidcrumpton/homebrew-tap
+#   * a Scoop manifest in davidcrumpton/scoop-bucket
+#   * checksums, SPDX SBOMs and keyless cosign signatures over the checksums
+#
+# Cut a release with:  git tag v0.5.6 && git push github v0.5.6
+# Dry run locally:     make release-check
+
+version: 2
+
+project_name: mcwsd
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: mcwsd
+    main: ./cmd/mcwsd
+    binary: mcwsd
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # main.Version is the var printed by `mcwsd version`; it is stamped from
+      # the git tag (goreleaser strips the leading "v").
+      - -s -w
+      - -X main.Version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - freebsd
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    ids:
+      - mcwsd
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      # The daemon has no built-in plugin search path: --plugin is required, so
+      # every archive must carry the .js plugins and say where they landed.
+      - plugins/*.js
+      - packaging/systemd/mcwsd.service
+      - packaging/systemd/mcwsd.env.example
+      - LICENSE
+      - README.md
+      - PLUGINS.md
+      - ARCHITECTURE.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# SPDX SBOM per archive (needs syft on PATH).
+sboms:
+  - id: archive-sbom
+    artifacts: archive
+
+# Keyless signing of the checksum file via the CI job's OIDC identity (needs
+# cosign on PATH and id-token: write). Verify with:
+#   cosign verify-blob --bundle checksums.txt.sigstore.json \
+#     --certificate-identity-regexp '^https://github.com/davidcrumpton/mcwsd/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     checksums.txt
+signs:
+  - id: cosign-checksums
+    cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    artifacts: checksum
+    output: true
+    args:
+      - sign-blob
+      - --yes
+      - --bundle=${signature}
+      - ${artifact}
+
+nfpms:
+  - id: packages
+    ids:
+      - mcwsd
+    package_name: mcwsd
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: David M Crumpton
+    homepage: https://github.com/davidcrumpton/mcwsd
+    maintainer: David Crumpton <azcrumpty@msn.com>
+    description: |-
+      Workspace daemon for ephemeral coding-agent development environments.
+
+      mcwsd provisions throwaway development workspaces (Docker, Podman, Apple
+      container, Kubernetes, FreeBSD jails, OpenBSD vmd, illumos zones, Proxmox
+      LXC, NetBSD accounts) behind a small HTTP API, with dependency caching,
+      capacity gating and automatic pruning.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: admin
+    priority: optional
+    epoch: 0
+    release: 1
+    umask: 0o755
+    # No hard dependency on a container runtime: the runtime is selected per
+    # daemon instance with --plugin (docker, podman, kubernetes, ...).
+    contents:
+      - src: plugins/*.js
+        dst: /usr/share/mcwsd/plugins
+        file_info:
+          mode: 0o644
+      - src: packaging/systemd/mcwsd.service
+        dst: /usr/lib/systemd/system/mcwsd.service
+        file_info:
+          mode: 0o644
+      - src: packaging/systemd/mcwsd.sysusers
+        dst: /usr/lib/sysusers.d/mcwsd.conf
+        file_info:
+          mode: 0o644
+      - src: packaging/systemd/mcwsd.tmpfiles
+        dst: /usr/lib/tmpfiles.d/mcwsd.conf
+        file_info:
+          mode: 0o644
+      - src: packaging/systemd/mcwsd.env.example
+        dst: /etc/mcwsd/mcwsd.env
+        type: config|noreplace
+        file_info:
+          mode: 0o640
+          owner: root
+          group: _wsd
+      - dst: /usr/share/doc/mcwsd
+        type: dir
+        file_info:
+          mode: 0o755
+      - src: LICENSE
+        dst: /usr/share/doc/mcwsd/LICENSE
+        file_info:
+          mode: 0o644
+      - src: README.md
+        dst: /usr/share/doc/mcwsd/README.md
+        file_info:
+          mode: 0o644
+      - src: PLUGINS.md
+        dst: /usr/share/doc/mcwsd/PLUGINS.md
+        file_info:
+          mode: 0o644
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    # Alpine has no systemd: ship an OpenRC service and create the user with
+    # busybox adduser instead of sysusers.d. Overrides replace the whole list
+    # for the given key, so contents/scripts are repeated here.
+    overrides:
+      apk:
+        dependencies:
+          - openrc
+        contents:
+          - src: plugins/*.js
+            dst: /usr/share/mcwsd/plugins
+            file_info:
+              mode: 0o644
+          - src: packaging/openrc/mcwsd
+            dst: /etc/init.d/mcwsd
+            file_info:
+              mode: 0o755
+          - src: packaging/openrc/mcwsd.confd
+            dst: /etc/conf.d/mcwsd
+            type: config|noreplace
+            file_info:
+              mode: 0o640
+          - src: packaging/systemd/mcwsd.env.example
+            dst: /etc/mcwsd/mcwsd.env
+            type: config|noreplace
+            file_info:
+              mode: 0o640
+          - dst: /usr/share/doc/mcwsd
+            type: dir
+            file_info:
+              mode: 0o755
+          - src: LICENSE
+            dst: /usr/share/doc/mcwsd/LICENSE
+            file_info:
+              mode: 0o644
+          - src: README.md
+            dst: /usr/share/doc/mcwsd/README.md
+            file_info:
+              mode: 0o644
+          - src: PLUGINS.md
+            dst: /usr/share/doc/mcwsd/PLUGINS.md
+            file_info:
+              mode: 0o644
+        scripts:
+          postinstall: packaging/scripts/apk-postinstall.sh
+          preremove: packaging/scripts/apk-preremove.sh
+          postremove: packaging/scripts/apk-postremove.sh
+
+# Homebrew formula (macOS and Linuxbrew). The tap lives in its own repository
+# because formulae are not allowed in a project repo. TAP_GITHUB_TOKEN must be
+# a PAT with contents:write on davidcrumpton/homebrew-tap.
+brews:
+  - name: mcwsd
+    repository:
+      owner: davidcrumpton
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/davidcrumpton/mcwsd
+    description: Workspace daemon for ephemeral coding-agent development environments
+    license: MIT
+    commit_author:
+      name: goreleaser-bot
+      email: aacrumpty@msn.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    install: |-
+      bin.install "mcwsd"
+      # The daemon needs an explicit --plugin path, so keep the runtime plugins
+      # next to the formula's prefix and point caveats at them.
+      (share/"mcwsd/plugins").install Dir["plugins/*.js"]
+    caveats: |-
+      Runtime plugins are installed in:
+        #{share}/mcwsd/plugins
+
+      Start the daemon with one of them, for example:
+        mcwsd daemon --plugin #{share}/mcwsd/plugins/docker.js \
+          --workspace-auth-mode=scoped --port 9080
+
+      A token for clients is generated with:
+        mcwsd token
+    test: |-
+      assert_match "mcwsd #{version}", shell_output("#{bin}/mcwsd version")
+
+# Scoop manifest for Windows (windows/amd64 and windows/arm64 builds exist).
+# Needs a bucket repo with the same PAT.
+scoops:
+  - name: mcwsd
+    repository:
+      owner: davidcrumpton
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/davidcrumpton/mcwsd
+    description: Workspace daemon for ephemeral coding-agent development environments
+    license: MIT
+    commit_author:
+      name: goreleaser-bot
+      email: aacrumpty@msn.com
+
+changelog:
+  use: github
+  sort: asc
+  abbrev: 7
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Documentation
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^chore(\(.+\))?:'
+      - '^test(\(.+\))?:'
+      - '^ci(\(.+\))?:'
+      - '^Merge pull request'
+      - '^Merge branch'
+
+release:
+  github:
+    owner: davidcrumpton
+    name: mcwsd
+  draft: false
+  prerelease: auto
+  name_template: "mcwsd {{ .Version }}"
+  header: |
+    ## mcwsd {{ .Version }}
+
+    Install with one of:
+
+    ```sh
+    # Homebrew (macOS / Linux)
+    brew install davidcrumpton/tap/mcwsd
+
+    # Debian / Ubuntu
+    sudo apt install ./mcwsd_{{ .Version }}_linux_amd64.deb
+
+    # Fedora / RHEL
+    sudo dnf install ./mcwsd-{{ .Version }}-1.x86_64.rpm
+
+    # Alpine
+    sudo apk add --allow-untrusted ./mcwsd_{{ .Version }}_linux_amd64.apk
+
+    # Anywhere with Go
+    go install github.com/davidcrumpton/mcwsd/cmd/mcwsd@{{ .Tag }}
+    ```
+
+    Every artifact is covered by `checksums.txt`, which is signed with cosign
+    (keyless, GitHub OIDC) and accompanied by a build provenance attestation.
+  footer: |
+    **Full changelog**: https://github.com/davidcrumpton/mcwsd/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    Artifacts also carry SPDX SBOMs (`*.spdx.json`) and SLSA build provenance
+    attestations (`gh attestation verify <file> --repo davidcrumpton/mcwsd`).
+
+# Snapshot builds (make snapshot) get a dev version and no publish.
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"

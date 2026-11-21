@@ -110,11 +110,11 @@ func TestDeployedOpenBSDVMDPlugin(t *testing.T) {
 	// execArgs maps onto ssh(1) with a cd + PATH payload as the final argv
 	// element (the remote command handed to the login shell).
 	tr := r.newTransport("wsd-ws", map[string]interface{}{
-		"native_id": "wsd-ws",
-		"ip":        "100.64.6.3",
-		"port":      22,
-		"username":  "root",
-		"key_path":  "/var/wsd/agent_ed25519",
+		"native_id":  "wsd-ws",
+		"ip":         "100.64.6.3",
+		"port":       22,
+		"username":   "root",
+		"key_path":   "/var/wsd/agent_ed25519",
 		"escalation": "",
 	})
 	argv, _, err := tr.execArgs([]string{"echo", "hi"}, "/workspace/repo", nil, false, false)

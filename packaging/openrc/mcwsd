@@ -1,0 +1,59 @@
+#!/sbin/openrc-run
+#
+# OpenRC service for mcwsd (Alpine Linux .apk package).
+#
+# Paths follow the packaging layout:
+#   binary  /usr/bin/mcwsd
+#   plugins /usr/share/mcwsd/plugins/*.js
+#   state   /var/lib/mcwsd
+#
+# Edit /etc/conf.d/mcwsd to pick a runtime plugin and add flags.
+
+name="mcwsd"
+description="Workspace daemon for ephemeral coding-agent development environments"
+
+command="/usr/bin/mcwsd"
+command_args="daemon \
+	--plugin ${MCWSD_PLUGIN:-/usr/share/mcwsd/plugins/docker.js} \
+	--workspace-auth-mode=${MCWSD_WORKSPACE_AUTH_MODE:-strict} \
+	--bind-address=${MCWSD_BIND_ADDRESS:-127.0.0.1} \
+	--port=${MCWSD_PORT:-9080} \
+	--workspace-base-path=/var/lib/mcwsd/workspaces \
+	--cache-dir=/var/lib/mcwsd/cache \
+	--state-file=/var/lib/mcwsd/state.json \
+	--jobs-file=/var/lib/mcwsd/jobs.json \
+	--audit \
+	--audit-file=/var/log/mcwsd/audit.jsonl"
+command_user="_wsd:_wsd"
+directory="/var/lib/mcwsd"
+pidfile="/run/${RC_SVCNAME}.pid"
+command_background=true
+respawn_delay=5
+respawn_max=0
+
+depend() {
+	need net
+	# The default plugin shells out to docker; keep the daemon behind it when
+	# the runtime is installed on the same host.
+	use docker
+}
+
+start_pre() {
+	checkpath --directory --owner _wsd:_wsd --mode 0750 \
+		/var/lib/mcwsd /var/lib/mcwsd/cache /var/lib/mcwsd/workspaces /var/log/mcwsd
+	checkpath --directory --mode 0755 /run/mcwsd
+
+	# Load secrets (MCWSD_TOKEN, forge tokens, SSH key paths).
+	if [ -f /etc/mcwsd/mcwsd.env ]; then
+		set -a
+		# shellcheck disable=SC1091
+		. /etc/mcwsd/mcwsd.env
+		set +a
+	fi
+
+	if [ -z "${MCWSD_TOKEN}" ]; then
+		eerror "MCWSD_TOKEN is not set; run 'mcwsd token' and add it to /etc/mcwsd/mcwsd.env"
+		return 1
+	fi
+	return 0
+}

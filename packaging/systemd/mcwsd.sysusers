@@ -1,0 +1,4 @@
+# Creates the unprivileged service account used by mcwsd.service.
+#   u <name> <id|-> <description> <home> [shell]
+# An id of "-" lets systemd allocate one; the default shell is /sbin/nologin.
+u _wsd - "mcwsd workspace daemon" /var/lib/mcwsd

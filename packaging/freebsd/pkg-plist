@@ -1,0 +1,13 @@
+bin/mcwsd
+share/mcwsd/plugins/apple-container.js
+share/mcwsd/plugins/docker.js
+share/mcwsd/plugins/freebsd-jail.js
+share/mcwsd/plugins/kubernetes.js
+share/mcwsd/plugins/netbsd-account.js
+share/mcwsd/plugins/openbsd-vmd.js
+share/mcwsd/plugins/podman.js
+share/mcwsd/plugins/proxmox-lxc.js
+share/mcwsd/plugins/zones.js
+%%PORTDOCS%%%%DOCSDIR%%/FREEBSD-SETUP.md
+%%PORTDOCS%%%%DOCSDIR%%/PLUGINS.md
+%%PORTDOCS%%%%DOCSDIR%%/README.md

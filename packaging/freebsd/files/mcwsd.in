@@ -1,0 +1,72 @@
+#!/bin/sh
+#
+# PROVIDE: mcwsd
+# REQUIRE: NETWORKING
+# BEFORE: LOGIN
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable mcwsd:
+#
+# mcwsd_enable="YES"
+# mcwsd_plugin="/usr/local/share/mcwsd/plugins/freebsd-jail.js"
+# mcwsd_auth_mode="strict"
+# mcwsd_port="9080"
+#
+# Secrets (MCWSD_TOKEN, forge tokens, SSH key paths) go in
+# /usr/local/etc/mcwsd.env, which must be mode 0640 root:_wsd.
+
+. /etc/rc.subr
+
+name="mcwsd"
+rcvar="mcwsd_enable"
+desc="Workspace daemon for ephemeral coding-agent development environments"
+
+load_rc_config $name
+
+: ${mcwsd_enable:="NO"}
+: ${mcwsd_user:="_wsd"}
+: ${mcwsd_group:="_wsd"}
+: ${mcwsd_plugin:="/usr/local/share/mcwsd/plugins/freebsd-jail.js"}
+: ${mcwsd_auth_mode:="strict"}
+: ${mcwsd_bind_address:="127.0.0.1"}
+: ${mcwsd_port:="9080"}
+: ${mcwsd_base:="/var/db/mcwsd"}
+: ${mcwsd_env_file:="/usr/local/etc/mcwsd.env"}
+
+command="/usr/sbin/daemon"
+procname="/usr/local/bin/mcwsd"
+pidfile="/var/run/${name}.pid"
+
+command_args="-f -p ${pidfile} -r -t ${name} \
+	/usr/local/bin/mcwsd daemon \
+	--plugin ${mcwsd_plugin} \
+	--workspace-auth-mode=${mcwsd_auth_mode} \
+	--bind-address=${mcwsd_bind_address} \
+	--port=${mcwsd_port} \
+	--workspace-base-path ${mcwsd_base}/workspaces \
+	--cache-dir ${mcwsd_base}/cache \
+	--state-file ${mcwsd_base}/state.json \
+	--jobs-file ${mcwsd_base}/jobs.json \
+	--audit \
+	--audit-file /var/log/mcwsd-audit.jsonl"
+
+start_precmd="mcwsd_prestart"
+
+mcwsd_prestart()
+{
+	install -d -o ${mcwsd_user} -g ${mcwsd_group} -m 0750 \
+		${mcwsd_base} ${mcwsd_base}/cache ${mcwsd_base}/workspaces
+	install -d -m 0755 /var/run/mcwsd
+
+	if [ -f "${mcwsd_env_file}" ]; then
+		set -a
+		. "${mcwsd_env_file}"
+		set +a
+	fi
+
+	if [ -z "${MCWSD_TOKEN}" ]; then
+		err 1 "${name}: MCWSD_TOKEN is not set (add it to ${mcwsd_env_file})"
+	fi
+}
+
+run_rc_command "$1"

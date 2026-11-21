@@ -43,6 +43,45 @@ mcwsd daemon --plugin plugins/podman.js --port 9080 --bind-address=0.0.0.0 --wor
 
 ## Installation
 
+### Install from a package
+
+Prebuilt packages are published on the [releases page](https://github.com/davidcrumpton/mcwsd/releases); every artifact is checksummed, signed with cosign and carries a build provenance attestation. See [PACKAGING.md](PACKAGING.md) for the full channel list and verification steps.
+
+```bash
+# macOS / Linuxbrew
+brew install davidcrumpton/tap/mcwsd
+
+# Debian / Ubuntu
+sudo apt install ./mcwsd_<version>_linux_amd64.deb
+
+# Fedora / RHEL / openSUSE
+sudo dnf install ./mcwsd-<version>-1.x86_64.rpm
+
+# Alpine
+sudo apk add --allow-untrusted ./mcwsd_<version>_linux_amd64.apk
+
+# Arch (AUR)
+yay -S mcwsd
+
+# Windows
+scoop install mcwsd
+```
+
+Packages install the binary to `/usr/bin/mcwsd`, the runtime plugins to `/usr/share/mcwsd/plugins/`, a systemd unit (OpenRC on Alpine) and `/etc/mcwsd/mcwsd.env`. The service is not started automatically: it needs a client token first.
+
+```bash
+mcwsd token                       # generate one
+sudo -e /etc/mcwsd/mcwsd.env      # set MCWSD_TOKEN=...
+sudo systemctl enable --now mcwsd
+```
+
+With Homebrew the plugins land in `$(brew --prefix)/share/mcwsd/plugins` and there is no unit file:
+
+```bash
+mcwsd daemon --plugin "$(brew --prefix)/share/mcwsd/plugins/docker.js" \
+  --workspace-auth-mode=scoped --port 9080
+```
+
 ### Prerequisites
 
 Before running the daemon, ensure you have:
@@ -69,6 +108,16 @@ go run cmd/mcwsd/main.go daemon --plugin plugins/podman.js --workspace-auth-mode
 ```bash
 go build -o mcwsd cmd/mcwsd/main.go
 ```
+
+Or, with the release tooling (stamps the version from the git tag):
+
+```bash
+make build        # ./mcwsd, version from git describe
+make check        # vet + gofmt + tests, what CI runs
+make snapshot     # cross-build matrix into dist/ via goreleaser
+```
+
+`make install PREFIX=/usr/local` installs the binary and the plugins.
 
 **Configuration flags** (defaults shown; `--workspace-auth-mode` is required):
 
